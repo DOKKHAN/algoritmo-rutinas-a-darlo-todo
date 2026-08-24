@@ -1,0 +1,223 @@
+{
+  "name": "Rutinas - Actualizador Nocturno Microciclos v1",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "ManualTrigger",
+      "name": "Ejecuci?n Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 23,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "ScheduleNocturno",
+      "name": "Schedule Nocturno",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -480,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "routines_automation_simular_dia",
+        "options": {}
+      },
+      "id": "WebhookSimularDia",
+      "name": "Webhook Simular D?a",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -480,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function parsePosibleJson(valor) {\n  if (valor === undefined || valor === null || valor === '') return {};\n  if (typeof valor === 'object') return valor;\n  if (typeof valor === 'string') {\n    const limpio = valor.trim();\n    if (!limpio) return {};\n    try { return JSON.parse(limpio); } catch (e) { return {}; }\n  }\n  return {};\n}\nfunction primero(payload) {\n  if (Array.isArray(payload)) return payload[0] || {};\n  return payload || {};\n}\nfunction intOrNull(v) {\n  if (v === undefined || v === null || v === '') return null;\n  const n = Number.parseInt(String(v), 10);\n  return Number.isFinite(n) ? n : null;\n}\nfunction bool(v, defecto = false) {\n  if (v === undefined || v === null || v === '') return defecto;\n  if (typeof v === 'boolean') return v;\n  const t = String(v).trim().toLowerCase();\n  if (['true', '1', 'si', 's?', 'yes', 'y'].includes(t)) return true;\n  if (['false', '0', 'no', 'n'].includes(t)) return false;\n  return defecto;\n}\nfunction ymd(date) {\n  return date.toISOString().slice(0, 10);\n}\nfunction fechaBase(valor) {\n  if (!valor) return new Date();\n  const d = new Date(String(valor));\n  if (Number.isNaN(d.getTime())) throw new Error(`fecha_proceso invalida: ${valor}`);\n  return d;\n}\n\nconst raw = $input.first()?.json || {};\nconst body = primero(parsePosibleJson(raw.body ?? raw));\nconst payload = Object.keys(body).length ? body : raw;\nconst dias = intOrNull(payload.dias_a_sumar ?? payload.simular_dias) ?? 0;\nconst base = fechaBase(payload.fecha_proceso ?? payload.fecha ?? null);\nbase.setDate(base.getDate() + dias);\n\nreturn [{\n  json: {\n    modo: raw.webhookUrl ? 'webhook_simulacion' : 'schedule_nocturno',\n    fecha_proceso: ymd(base),\n    id_alumno: intOrNull(payload.id_alumno),\n    id_mesociclo: intOrNull(payload.id_mesociclo),\n    forzar_recalculo: bool(payload.forzar_recalculo, false),\n    dry_run: bool(payload.dry_run, false)\n  }\n}];"
+      },
+      "id": "NormalizarEjecucion",
+      "name": "Normalizar Ejecuci?n",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH params AS (\n    SELECT\n        '{{ $json.fecha_proceso }}'::date AS fecha_proceso,\n        {{ $json.id_alumno ?? 'NULL' }}::int AS filtro_id_alumno,\n        {{ $json.id_mesociclo ?? 'NULL' }}::int AS filtro_id_mesociclo,\n        {{ $json.forzar_recalculo ? 'TRUE' : 'FALSE' }}::boolean AS forzar_recalculo,\n        {{ $json.dry_run ? 'TRUE' : 'FALSE' }}::boolean AS dry_run\n), activos AS (\n    SELECT\n        a.id_alumno,\n        a.nombre_completo,\n        COALESCE(a.frecuencia_semanal, 3) AS frecuencia_semanal,\n        COALESCE(NULLIF(a.nivel_experiencia, ''), 'P1') AS nivel_experiencia,\n        mc.id_macrociclo,\n        m.id_mesociclo,\n        m.numero_meso_en_macro,\n        COALESCE(m.semanas_totales, 6) AS semanas_totales,\n        GREATEST(\n            1,\n            LEAST(\n                COALESCE(m.semanas_totales, 6),\n                1 + FLOOR(((DATE_TRUNC('week', p.fecha_proceso)::date - DATE_TRUNC('week', m.fecha_inicio)::date)::numeric / 7))::int\n            )\n        ) AS semana_meso_actual,\n        DATE_TRUNC('week', p.fecha_proceso)::date AS fecha_inicio_iso,\n        (DATE_TRUNC('week', p.fecha_proceso)::date + INTERVAL '6 days')::date AS fecha_fin_iso,\n        p.forzar_recalculo,\n        p.dry_run,\n        p.fecha_proceso\n    FROM params p\n    JOIN adt.alumnos a ON a.estado_activo = TRUE\n    JOIN adt.macrociclos mc ON mc.id_alumno = a.id_alumno AND mc.esta_activo = TRUE\n    JOIN adt.mesociclos m ON m.id_macrociclo = mc.id_macrociclo AND m.esta_activo = TRUE\n    WHERE (p.filtro_id_alumno IS NULL OR a.id_alumno = p.filtro_id_alumno)\n      AND (p.filtro_id_mesociclo IS NULL OR m.id_mesociclo = p.filtro_id_mesociclo)\n), conteo AS (\n    SELECT\n        ac.*,\n        COUNT(DISTINCT be.dia_numero) AS dias_planificados_semana,\n        COUNT(DISTINCT CASE WHEN l.id_log IS NOT NULL THEN be.dia_numero END) AS entrenamientos_completados\n    FROM activos ac\n    LEFT JOIN adt.bloques_ejercicios be\n        ON be.id_mesociclo = ac.id_mesociclo\n       AND be.semana_meso = ac.semana_meso_actual\n    LEFT JOIN adt.log_entrenamiento l\n        ON l.id_bloque = be.id_bloque\n       AND l.fecha_realizada >= ac.fecha_inicio_iso\n       AND l.fecha_realizada < ac.fecha_inicio_iso + INTERVAL '7 days'\n    GROUP BY\n        ac.id_alumno, ac.nombre_completo, ac.frecuencia_semanal, ac.nivel_experiencia,\n        ac.id_macrociclo, ac.id_mesociclo, ac.numero_meso_en_macro, ac.semanas_totales,\n        ac.semana_meso_actual, ac.fecha_inicio_iso, ac.fecha_fin_iso,\n        ac.forzar_recalculo, ac.dry_run, ac.fecha_proceso\n), control_upsert AS (\n    INSERT INTO adt.microciclos_control (\n        id_mesociclo,\n        semana_meso,\n        fecha_inicio_iso,\n        fecha_fin_iso,\n        entrenamientos_esperados,\n        entrenamientos_completados,\n        estado,\n        fecha_ultima_evaluacion,\n        requiere_recalculo,\n        comentario,\n        actualizado_en\n    )\n    SELECT\n        c.id_mesociclo,\n        c.semana_meso_actual,\n        c.fecha_inicio_iso,\n        c.fecha_fin_iso,\n        LEAST(c.frecuencia_semanal, GREATEST(c.dias_planificados_semana, 0))::int AS entrenamientos_esperados,\n        c.entrenamientos_completados::int,\n        CASE\n            WHEN c.entrenamientos_completados >= LEAST(c.frecuencia_semanal, GREATEST(c.dias_planificados_semana, 0))\n                 AND LEAST(c.frecuencia_semanal, GREATEST(c.dias_planificados_semana, 0)) > 0 THEN 'completo'\n            WHEN c.entrenamientos_completados > 0 THEN 'en_progreso'\n            ELSE 'pendiente'\n        END AS estado,\n        CURRENT_TIMESTAMP,\n        (\n            c.forzar_recalculo OR (\n                c.entrenamientos_completados >= LEAST(c.frecuencia_semanal, GREATEST(c.dias_planificados_semana, 0))\n                AND LEAST(c.frecuencia_semanal, GREATEST(c.dias_planificados_semana, 0)) > 0\n            )\n        ) AS requiere_recalculo,\n        CONCAT('Evaluado al ', c.fecha_proceso::text, '. Semana ISO ', c.fecha_inicio_iso::text, ' a ', c.fecha_fin_iso::text) AS comentario,\n        CURRENT_TIMESTAMP\n    FROM conteo c\n    ON CONFLICT (id_mesociclo, semana_meso)\n    DO UPDATE SET\n        fecha_inicio_iso = EXCLUDED.fecha_inicio_iso,\n        fecha_fin_iso = EXCLUDED.fecha_fin_iso,\n        entrenamientos_esperados = EXCLUDED.entrenamientos_esperados,\n        entrenamientos_completados = EXCLUDED.entrenamientos_completados,\n        estado = EXCLUDED.estado,\n        fecha_ultima_evaluacion = EXCLUDED.fecha_ultima_evaluacion,\n        requiere_recalculo = EXCLUDED.requiere_recalculo,\n        comentario = EXCLUDED.comentario,\n        actualizado_en = CURRENT_TIMESTAMP\n    RETURNING *\n), elegibles AS (\n    SELECT\n        c.*,\n        cu.id_microciclo,\n        cu.estado AS estado_control,\n        cu.requiere_recalculo,\n        (c.semana_meso_actual + 1) AS semana_target\n    FROM conteo c\n    JOIN control_upsert cu\n      ON cu.id_mesociclo = c.id_mesociclo\n     AND cu.semana_meso = c.semana_meso_actual\n    WHERE (cu.requiere_recalculo = TRUE OR c.forzar_recalculo = TRUE)\n      AND c.semana_meso_actual < c.semanas_totales\n), stats_semana AS (\n    SELECT\n        el.id_mesociclo,\n        be.id_ejercicio,\n        AVG(COALESCE(l.reps_promedio, l.reps_logradas::numeric)) AS reps_promedio_semana,\n        MAX(COALESCE(l.series_realizadas, be.series)) AS series_realizadas_semana,\n        MAX(l.peso_utilizado) FILTER (WHERE l.peso_utilizado IS NOT NULL) AS peso_referencia,\n        AVG(l.rir_reportado) FILTER (WHERE l.rir_reportado IS NOT NULL) AS rir_promedio_semana,\n        AVG(l.rpe_reportado) FILTER (WHERE l.rpe_reportado IS NOT NULL) AS rpe_promedio_semana,\n        MAX(l.duracion_realizada_min) FILTER (WHERE l.duracion_realizada_min IS NOT NULL) AS duracion_realizada_min\n    FROM elegibles el\n    JOIN adt.bloques_ejercicios be\n      ON be.id_mesociclo = el.id_mesociclo\n     AND be.semana_meso = el.semana_meso_actual\n    JOIN adt.log_entrenamiento l\n      ON l.id_bloque = be.id_bloque\n     AND l.fecha_realizada >= el.fecha_inicio_iso\n     AND l.fecha_realizada < el.fecha_inicio_iso + INTERVAL '7 days'\n    GROUP BY el.id_mesociclo, be.id_ejercicio\n), historial_iso AS (\n    SELECT\n        el.id_mesociclo,\n        be.id_ejercicio,\n        DATE_TRUNC('week', l.fecha_realizada)::date AS iso_semana_inicio,\n        AVG(COALESCE(l.reps_promedio, l.reps_logradas::numeric)) AS reps_promedio\n    FROM elegibles el\n    JOIN adt.bloques_ejercicios be ON be.id_mesociclo = el.id_mesociclo\n    JOIN adt.log_entrenamiento l ON l.id_bloque = be.id_bloque\n    WHERE l.fecha_realizada < el.fecha_inicio_iso + INTERVAL '7 days'\n    GROUP BY el.id_mesociclo, be.id_ejercicio, DATE_TRUNC('week', l.fecha_realizada)::date\n), historial_ranked AS (\n    SELECT\n        h.*,\n        ROW_NUMBER() OVER (PARTITION BY h.id_mesociclo, h.id_ejercicio ORDER BY h.iso_semana_inicio DESC) AS rn\n    FROM historial_iso h\n), historial_dos AS (\n    SELECT\n        id_mesociclo,\n        id_ejercicio,\n        JSONB_AGG(\n            JSONB_BUILD_OBJECT('iso_semana_inicio', iso_semana_inicio, 'reps_promedio', reps_promedio)\n            ORDER BY iso_semana_inicio DESC\n        ) FILTER (WHERE rn <= 2) AS ultimas_dos_semanas\n    FROM historial_ranked\n    WHERE rn <= 2\n    GROUP BY id_mesociclo, id_ejercicio\n)\nSELECT\n    el.id_alumno,\n    el.nombre_completo,\n    el.nivel_experiencia,\n    el.id_macrociclo,\n    el.id_mesociclo,\n    el.id_microciclo,\n    el.semana_meso_actual AS semana_origen,\n    el.semana_target,\n    el.fecha_inicio_iso,\n    el.fecha_fin_iso,\n    el.entrenamientos_completados,\n    LEAST(el.frecuencia_semanal, GREATEST(el.dias_planificados_semana, 0))::int AS entrenamientos_esperados,\n    el.estado_control,\n    el.forzar_recalculo,\n    el.dry_run,\n    bt.id_bloque AS id_bloque_target,\n    bt.id_ejercicio,\n    bt.dia_numero,\n    bt.orden,\n    bt.tipo_slot,\n    bt.series AS series_actuales,\n    bt.reps_min AS reps_min_actual,\n    bt.reps_max AS reps_max_actual,\n    bt.peso_sugerido_inicial AS peso_actual,\n    bt.rir_objetivo_min,\n    bt.rir_objetivo_max,\n    bt.tempo,\n    bt.descanso_seg,\n    bt.duracion_objetivo_min,\n    e.nombre AS nombre_ejercicio,\n    e.multi_mono,\n    e.patron_movimiento,\n    e.equipo_necesario,\n    e.accesorio,\n    COALESCE(ss.reps_promedio_semana, 0) AS reps_promedio_semana,\n    COALESCE(ss.series_realizadas_semana, bt.series, 3) AS series_realizadas_semana,\n    COALESCE(ss.peso_referencia, bt.peso_sugerido_inicial, 0) AS peso_referencia,\n    ss.rir_promedio_semana,\n    ss.rpe_promedio_semana,\n    ss.duracion_realizada_min,\n    hd.ultimas_dos_semanas\nFROM elegibles el\nJOIN adt.bloques_ejercicios bt\n  ON bt.id_mesociclo = el.id_mesociclo\n AND bt.semana_meso = el.semana_target\nLEFT JOIN adt.log_entrenamiento lt ON lt.id_bloque = bt.id_bloque\nJOIN adt.ejercicios e ON e.id_ejercicio = bt.id_ejercicio\nLEFT JOIN stats_semana ss\n  ON ss.id_mesociclo = el.id_mesociclo\n AND ss.id_ejercicio = bt.id_ejercicio\nLEFT JOIN historial_dos hd\n  ON hd.id_mesociclo = el.id_mesociclo\n AND hd.id_ejercicio = bt.id_ejercicio\nWHERE lt.id_log IS NULL\nORDER BY el.id_alumno, el.id_mesociclo, bt.semana_meso, bt.dia_numero, bt.orden;",
+        "options": {}
+      },
+      "id": "ListarBloques",
+      "name": "Listar Bloques para Recalculo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        40,
+        20
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const limpiar = valor => String(valor || '').toUpperCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\nconst canonTipo = tipo => limpiar(tipo).replace('SECUNDARIO_RECOMENDADO', 'SECUNDARIO').replace('TERCEARIO', 'TERCIARIO').replace('TRECERIO', 'TERCIARIO');\nfunction esMono(row) {\n  const tipo = canonTipo(row.tipo_slot);\n  const multiMono = limpiar(row.multi_mono);\n  return tipo === 'TERCIARIO' || tipo === 'DEBILIDAD' || multiMono.includes('MONO');\n}\nfunction clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }\nfunction asNumber(v, d = 0) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : d;\n}\nfunction parseHist(v) {\n  if (!v) return [];\n  if (Array.isArray(v)) return v;\n  if (typeof v === 'object') return Array.isArray(v) ? v : [];\n  try { return JSON.parse(v); } catch (e) { return []; }\n}\nfunction pctDescarga(nivel, mono) {\n  if (nivel === 'P2' && !mono) return 0.95;\n  if (['I1', 'I2'].includes(nivel)) return 0.975;\n  return 0.90;\n}\nfunction pctSubida(nivel) {\n  return nivel === 'I2' ? 1.025 : 1.05;\n}\nfunction descanso(rirMin, rirMax, multi, aerobico) {\n  if (aerobico) return 0;\n  const rir = Math.round((asNumber(rirMin, 4) + asNumber(rirMax, 4)) / 2);\n  if (rir >= 3) return multi ? 90 : 60;\n  if (rir === 2) return multi ? 120 : 90;\n  if (rir === 1) return multi ? 150 : 90;\n  return multi ? 180 : 120;\n}\nfunction rangoInicial(nivel, mono) {\n  if (nivel === 'P2') return mono ? [10, 12] : [8, 10];\n  if (nivel === 'P1') return mono ? [12, 15] : [10, 12];\n  return mono ? [10, 12] : [8, 12];\n}\nfunction thresholdBajo(nivel, mono, min, max) {\n  if (nivel === 'P2' && !mono && min === 8 && max === 10) return 9;\n  return 11;\n}\nfunction dosFallos(row, min, max, nivel, mono) {\n  const hist = parseHist(row.ultimas_dos_semanas).slice(0, 2);\n  if (hist.length < 2) return false;\n  const threshold = (min <= 8 && max <= 10 && nivel === 'P2' && !mono) ? 9 : (max >= 15 ? 13.5 : 11);\n  return hist.every(x => asNumber(x.reps_promedio, 0) <= threshold);\n}\n\nreturn $input.all().map(item => {\n  const r = item.json;\n  const nivel = r.nivel_experiencia === 'P3' ? 'I1' : (r.nivel_experiencia || 'P1');\n  const tipo = canonTipo(r.tipo_slot);\n  const aerobico = tipo === 'AEROBICO';\n  const isometrico = limpiar(r.patron_movimiento).includes('ISOMETR') || limpiar(r.nombre_ejercicio).includes('ISOMETR');\n  const banda = limpiar(r.equipo_necesario).includes('BANDA') || limpiar(r.accesorio).includes('BANDA');\n  const mono = esMono(r);\n  const multi = !mono;\n  let series = clamp(asNumber(r.series_actuales, 3), 0, 4);\n  let repsMin = asNumber(r.reps_min_actual, rangoInicial(nivel, mono)[0]);\n  let repsMax = asNumber(r.reps_max_actual, rangoInicial(nivel, mono)[1]);\n  let peso = asNumber(r.peso_referencia, asNumber(r.peso_actual, 0));\n  let duracion = r.duracion_objetivo_min ?? null;\n  let tempo = r.tempo || '1-1-2';\n  let estado = 'sin_cambios';\n  let comentario = `Actualizador nocturno: semana ${r.semana_origen} -> ${r.semana_target}; completados ${r.entrenamientos_completados}/${r.entrenamientos_esperados}`;\n  const promedio = asNumber(r.reps_promedio_semana, 0);\n\n  if (aerobico) {\n    series = 0;\n    repsMin = 0;\n    repsMax = 0;\n    peso = 0;\n    duracion = 10;\n    tempo = 'CONTINUO';\n    estado = 'aerobico_10_min';\n    comentario += nivel === 'P1' ? ' | Aerobico suave 10 minutos' : ' | Aerobico media intensidad 10 minutos';\n  } else if (isometrico) {\n    const baseSeg = repsMax > 0 ? repsMax : 20;\n    const realizadoSeg = asNumber(r.duracion_realizada_min, 0) * 60;\n    const cumple = realizadoSeg >= baseSeg;\n    const siguienteSeg = cumple ? clamp(baseSeg + 5, 15, 60) : clamp(baseSeg - 5, 15, 60);\n    repsMin = siguienteSeg;\n    repsMax = siguienteSeg;\n    series = cumple ? clamp(series, 3, 4) : clamp(series + 1, 3, 4);\n    tempo = 'ISOMETRICO';\n    duracion = Math.round(siguienteSeg / 60);\n    estado = cumple ? 'isometrico_sube_5s' : 'isometrico_baja_5s_o_sube_series';\n    comentario += ' | Escala isometrica provisional: 15-60 segundos en saltos de 5s';\n  } else if (promedio > 0) {\n    const p2MultiBajo = nivel === 'P2' && !mono && repsMin === 8 && repsMax === 10;\n    const rangoBajo = p2MultiBajo || (repsMin === 10 && repsMax === 12);\n    const rangoAlto = (repsMin === 12 && repsMax === 15) || (nivel === 'P2' && !mono && repsMin === 10 && repsMax === 12);\n    const falloDoble = dosFallos(r, repsMin, repsMax, nivel, mono);\n\n    if (rangoBajo) {\n      const threshold = thresholdBajo(nivel, mono, repsMin, repsMax);\n      if (promedio >= threshold) {\n        [repsMin, repsMax] = (nivel === 'P2' && !mono) ? [10, 12] : [12, 15];\n        estado = 'sube_rango_repeticiones';\n      } else if (falloDoble) {\n        peso = peso > 0 ? peso * pctDescarga(nivel, mono) : 0;\n        estado = 'descarga_por_dos_fallos';\n      } else {\n        estado = 'mantener_por_primer_fallo';\n      }\n    } else if (rangoAlto) {\n      const threshold = repsMax === 15 ? 13.5 : 11;\n      if (promedio > threshold) {\n        if (series < 4) {\n          series += 1;\n          estado = 'sube_serie';\n        } else {\n          peso = peso > 0 ? peso * pctSubida(nivel) : 0;\n          [repsMin, repsMax] = (nivel === 'P2' && !mono) ? [8, 10] : [10, 12];\n          estado = 'sube_carga_y_reinicia_rango';\n        }\n      } else if (falloDoble) {\n        if (series < 4) {\n          series += 1;\n          [repsMin, repsMax] = (nivel === 'P2' && !mono) ? [8, 10] : [10, 12];\n          estado = 'sube_serie_y_reinicia_rango_por_dos_fallos';\n        } else {\n          peso = peso > 0 ? peso * pctDescarga(nivel, mono) : 0;\n          [repsMin, repsMax] = (nivel === 'P2' && !mono) ? [8, 10] : [10, 12];\n          estado = 'descarga_y_reinicia_rango_por_dos_fallos';\n        }\n      } else {\n        estado = 'mantener_rango_alto_por_primer_fallo';\n      }\n    }\n    comentario += ` | promedio reps ${promedio.toFixed(1)} | estado ${estado}`;\n  }\n\n  if (banda) comentario += ' | Bandas: pendiente tabla oficial de colores/resistencias';\n\n  const descansoSeg = descanso(r.rir_objetivo_min, r.rir_objetivo_max, multi, aerobico);\n  return {\n    json: {\n      ...r,\n      series_nueva: series,\n      reps_min_nueva: repsMin,\n      reps_max_nueva: repsMax,\n      peso_nuevo: Number(peso || 0).toFixed(2),\n      tempo_nuevo: tempo,\n      descanso_seg_nuevo: descansoSeg,\n      duracion_objetivo_min_nueva: duracion,\n      estado_microciclo_nuevo: estado,\n      comentario_nuevo: comentario\n    }\n  };\n});"
+      },
+      "id": "CalcularProgresion",
+      "name": "Calcular Progresi?n",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH entrada AS (\n    SELECT\n        {{ $json.id_bloque_target }}::int AS id_bloque,\n        {{ $json.series_nueva }}::int AS series,\n        {{ $json.reps_min_nueva }}::int AS reps_min,\n        {{ $json.reps_max_nueva }}::int AS reps_max,\n        {{ $json.peso_nuevo }}::numeric AS peso_sugerido_inicial,\n        '{{ $json.tempo_nuevo }}'::varchar AS tempo,\n        {{ $json.descanso_seg_nuevo }}::int AS descanso_seg,\n        {{ $json.duracion_objetivo_min_nueva ?? 'NULL' }}::int AS duracion_objetivo_min,\n        '{{ $json.estado_microciclo_nuevo }}'::varchar AS estado_microciclo,\n        '{{ $json.comentario_nuevo.replace(/'/g, \"''\") }}'::text AS comentario_nuevo,\n        {{ $json.dry_run ? 'TRUE' : 'FALSE' }}::boolean AS dry_run\n), actualizado AS (\n    UPDATE adt.bloques_ejercicios be\n    SET\n        series = e.series,\n        reps_min = e.reps_min,\n        reps_max = e.reps_max,\n        peso_sugerido_inicial = e.peso_sugerido_inicial,\n        tempo = e.tempo,\n        descanso_seg = e.descanso_seg,\n        duracion_objetivo_min = e.duracion_objetivo_min,\n        estado_microciclo = e.estado_microciclo,\n        comentario_semanal = CONCAT(COALESCE(be.comentario_semanal, ''), ' | ', e.comentario_nuevo),\n        actualizado_en = CURRENT_TIMESTAMP\n    FROM entrada e\n    WHERE be.id_bloque = e.id_bloque\n      AND e.dry_run = FALSE\n      AND NOT EXISTS (\n          SELECT 1 FROM adt.log_entrenamiento l WHERE l.id_bloque = be.id_bloque\n      )\n    RETURNING\n        'updated'::text AS accion,\n        be.id_bloque,\n        be.id_mesociclo,\n        be.semana_meso,\n        be.dia_numero,\n        be.orden,\n        be.id_ejercicio,\n        be.series,\n        be.reps_min,\n        be.reps_max,\n        be.peso_sugerido_inicial,\n        be.estado_microciclo\n), simulacion AS (\n    SELECT\n        'dry_run'::text AS accion,\n        be.id_bloque,\n        be.id_mesociclo,\n        be.semana_meso,\n        be.dia_numero,\n        be.orden,\n        be.id_ejercicio,\n        e.series,\n        e.reps_min,\n        e.reps_max,\n        e.peso_sugerido_inicial,\n        e.estado_microciclo\n    FROM entrada e\n    JOIN adt.bloques_ejercicios be ON be.id_bloque = e.id_bloque\n    WHERE e.dry_run = TRUE\n)\nSELECT * FROM actualizado\nUNION ALL\nSELECT * FROM simulacion;",
+        "options": {}
+      },
+      "id": "ActualizarBloque",
+      "name": "Actualizar Bloque Futuro",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        560,
+        20
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nreturn [{\n  json: {\n    actualizados: items.length,\n    bloques: items,\n    mensaje: items.length ? 'Microciclos actualizados' : 'No hubo bloques elegibles para actualizar'\n  }\n}];"
+      },
+      "id": "Resumen",
+      "name": "Resumen Actualizaci?n",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        20
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Ejecuci?n Manual": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Ejecuci?n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Nocturno": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Ejecuci?n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Simular D?a": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Ejecuci?n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Ejecuci?n": {
+      "main": [
+        [
+          {
+            "node": "Listar Bloques para Recalculo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Listar Bloques para Recalculo": {
+      "main": [
+        [
+          {
+            "node": "Calcular Progresi?n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular Progresi?n": {
+      "main": [
+        [
+          {
+            "node": "Actualizar Bloque Futuro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Actualizar Bloque Futuro": {
+      "main": [
+        [
+          {
+            "node": "Resumen Actualizaci?n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "rutinas-actualizador-nocturno-microciclos-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "RutinasActualizadorNocturnoMicrociclosV1",
+  "tags": []
+}

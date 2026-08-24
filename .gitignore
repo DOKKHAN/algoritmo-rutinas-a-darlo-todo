@@ -1,0 +1,37 @@
+# Archivos temporales
+tmp/
+tmp_*
+tmp_pdf_render/
+*.tmp
+
+# Salidas/exportaciones operativas
+tbl_routine_exercises.csv
+*_extract.txt
+
+# Historicos del root. Las versiones canónicas viven en docs/, n8n/ y sql/.
+/Algoritmo de Rutina*.json
+/Drive a PSQL*.json
+/Rutinas_actualizador*.json
+/reset_total_*.sql
+/validacion_*.sql
+/migracion_*.sql
+/AGENTS.md
+/Contrato_Webhook_Appsmith_Rutinas.md
+/Instrucción_algoritmo_rutinas.md
+/instrucciones_webhook.md
+
+# Datos cargados desde planillas con informacion de alumnos o salud
+alumnos*.csv
+alumno_problemas*.csv
+problemas_restricciones*.csv
+ejercicios*.csv
+
+# Documentos fuente pesados o historicos fuera de docs/
+/*.pdf
+/*.xlsx
+/OLD/
+
+# Sistema/editor
+.DS_Store
+Thumbs.db
+desktop.ini

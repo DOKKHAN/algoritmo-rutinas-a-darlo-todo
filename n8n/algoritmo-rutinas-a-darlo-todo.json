@@ -1,0 +1,620 @@
+{
+  "name": "Algoritmo de Rutina matriz v3.6.1 fix orden nivel",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -144
+      ],
+      "id": "dd0022ca-f567-46d3-80a6-92f887cb932c",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "function parsePosibleJson(valor) {\n  if (valor === undefined || valor === null || valor === '') return {};\n  if (typeof valor === 'object') return valor;\n  if (typeof valor === 'string') {\n    const limpio = valor.trim();\n    if (!limpio) return {};\n    try {\n      return JSON.parse(limpio);\n    } catch (e) {\n      return {};\n    }\n  }\n  return {};\n}\n\nfunction normalizarPayload(base, extra) {\n  if (Array.isArray(extra)) {\n    return extra.map(item => ({ ...base, ...(typeof item === 'object' && item !== null ? item : {}) }));\n  }\n  if (typeof extra === 'object' && extra !== null) {\n    return [{ ...base, ...extra }];\n  }\n  return [{ ...base }];\n}\n\nconst fuentesBase = [\n  $json,\n  $json.query,\n  $json.params,\n  $json.params?.query\n];\n\nlet base = {};\nfor (const fuente of fuentesBase) {\n  const parsed = parsePosibleJson(fuente);\n  if (!Array.isArray(parsed)) base = { ...base, ...parsed };\n}\n\nconst posiblesBodies = [\n  $json.body,\n  $json.query?.body,\n  $json.params?.body,\n  $json.params?.query?.body,\n  base.body\n];\n\nlet candidatos = [{ ...base }];\nfor (const body of posiblesBodies) {\n  const parsed = parsePosibleJson(body);\n  if (Array.isArray(parsed) || (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0)) {\n    candidatos = normalizarPayload(base, parsed);\n  }\n}\n\nconst salida = [];\nfor (const payload of candidatos) {\n  const nestedBody = parsePosibleJson(payload.body);\n  const finalPayload = Array.isArray(nestedBody)\n    ? { ...payload, ...(nestedBody[0] || {}) }\n    : { ...payload, ...nestedBody };\n\n  const idRaw = finalPayload.id_alumno ?? finalPayload.idAlumno ?? finalPayload.alumno_id ?? finalPayload.id;\n  const idAlumno = Number(idRaw);\n\n  if (!idAlumno || Number.isNaN(idAlumno)) continue;\n\n  salida.push({\n    json: {\n      ...finalPayload,\n      id_alumno: idAlumno\n    }\n  });\n}\n\nif (!salida.length) {\n  throw new Error('Entrada inválida: no se encontró id_alumno. Recibido: ' + JSON.stringify($json).slice(0, 1000));\n}\n\nreturn salida;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "b5d90afa-655d-46db-bc67-5572b0b0ed3b",
+      "name": "Normalizar Entrada Rutina"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n    a.id_alumno, \n    a.nombre_completo, \n    a.nivel_experiencia, \n    a.frecuencia_semanal,\n    a.objetivo,\n    a.enfoque_principal,\n    a.enfoque_especifico,\n    a.debilidad,\n    a.prioridad_recomposicion,\n    a.evaluacion_inicial,\n    COALESCE(string_agg(DISTINCT r.patron_a_evitar, ','), 'Ninguna') as restricciones,\n    (SELECT s.id_sesion \n     FROM adt.evaluaciones_sesion s \n     WHERE s.id_alumno = a.id_alumno \n     ORDER BY s.fecha DESC LIMIT 1) as ultima_sesion_id\nFROM adt.alumnos a\nLEFT JOIN adt.alumno_problemas ap ON a.id_alumno = ap.id_alumno AND ap.esta_activo = TRUE\nLEFT JOIN adt.problemas_restricciones r ON ap.id_problema = r.id_problema\nWHERE a.id_alumno = {{ $json.id_alumno }}\nGROUP BY a.id_alumno;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        416,
+        0
+      ],
+      "id": "6a8eccba-4c07-4cb5-a7ac-40d2ce010aa9",
+      "name": "Obtención de Contexto del Alumno",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9c501ee6-ec7e-4e9a-a568-7016cec62336",
+              "leftValue": "={{ $json.evaluacion_inicial }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        640,
+        0
+      ],
+      "id": "8b91670c-cbde-4ecb-bb3e-ced165ac36da",
+      "name": "IF de validación de evaluación"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH existente AS (\n    SELECT id_macrociclo\n    FROM adt.macrociclos\n    WHERE id_alumno = {{ $('Obtención de Contexto del Alumno').item.json.id_alumno }}\n      AND esta_activo = TRUE\n    ORDER BY fecha_inicio DESC, id_macrociclo DESC\n    LIMIT 1\n), insertado AS (\n    INSERT INTO adt.macrociclos (\n        id_alumno,\n        nombre_macro,\n        fecha_inicio,\n        fecha_fin_estimada,\n        objetivo_global,\n        esta_activo\n    )\n    SELECT\n        {{ $('Obtención de Contexto del Alumno').item.json.id_alumno }},\n        'Macrociclo Inicial - 5 Meses',\n        CURRENT_DATE,\n        CURRENT_DATE + INTERVAL '5 months',\n        {{ $('Obtención de Contexto del Alumno').item.json.objetivo ? \"'\" + $('Obtención de Contexto del Alumno').item.json.objetivo.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n        TRUE\n    WHERE NOT EXISTS (SELECT 1 FROM existente)\n    RETURNING id_macrociclo\n)\nSELECT id_macrociclo FROM existente\nUNION ALL\nSELECT id_macrociclo FROM insertado\nLIMIT 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        848,
+        -96
+      ],
+      "id": "74fd7b58-9c46-4834-a87e-f1cea2c479f5",
+      "name": "Obtener o Crear Macrociclo Activo",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const id_macrociclo = Number($json.id_macrociclo);\n\nif (!id_macrociclo || Number.isNaN(id_macrociclo)) {\n  throw new Error('Obtener o Crear Macrociclo Activo no devolvió id_macrociclo válido.');\n}\n\nreturn [{ json: { id_macrociclo } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        -96
+      ],
+      "id": "7bdd7923-9872-43c7-a546-bb10f87f3447",
+      "name": "Unificador de Macrociclo"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as total_mesos\nFROM adt.mesociclos\nWHERE id_macrociclo = {{ Number($json.id_macrociclo) }};",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1264,
+        -96
+      ],
+      "id": "be293df3-08d7-436b-8c0c-079178044050",
+      "name": "Contar Mesociclos del Macrociclo",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const total = parseInt($input.first().json.total_mesos || 0, 10);\nlet fase = 'Familiarización';\n\nif (total === 1) fase = 'Consolidación';\nif (total >= 2) fase = 'Realización';\n\nconst id_macrociclo = Number($('Unificador de Macrociclo').first().json.id_macrociclo);\nif (!id_macrociclo || Number.isNaN(id_macrociclo)) {\n  throw new Error('Calculadora de Fase no recibió id_macrociclo válido desde Unificador de Macrociclo.');\n}\n\nreturn [{\n  json: {\n    id_macrociclo,\n    numero_meso: total + 1,\n    fase_tipo: fase\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        -96
+      ],
+      "id": "3408dc88-e7a1-46d6-b129-3b3a21880164",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH activo AS (\n    SELECT id_mesociclo, numero_meso_en_macro, fase_tipo, semanas_totales, FALSE AS creado\n    FROM adt.mesociclos\n    WHERE id_macrociclo = {{ Number($json.id_macrociclo) }}\n      AND esta_activo = TRUE\n    ORDER BY fecha_inicio DESC, id_mesociclo DESC\n    LIMIT 1\n), insertado AS (\n    INSERT INTO adt.mesociclos (\n        id_macrociclo,\n        numero_meso_en_macro,\n        fase_tipo,\n        fecha_inicio,\n        fecha_fin_estimada,\n        semanas_totales,\n        esta_activo\n    )\n    SELECT\n        {{ Number($json.id_macrociclo) }},\n        {{ Number($json.numero_meso) }},\n        '{{ $json.fase_tipo }}',\n        CURRENT_DATE,\n        CURRENT_DATE + INTERVAL '6 weeks',\n        6,\n        TRUE\n    WHERE NOT EXISTS (SELECT 1 FROM activo)\n    RETURNING id_mesociclo, numero_meso_en_macro, fase_tipo, semanas_totales, TRUE AS creado\n)\nSELECT id_mesociclo, numero_meso_en_macro, fase_tipo, semanas_totales, creado\nFROM activo\nUNION ALL\nSELECT id_mesociclo, numero_meso_en_macro, fase_tipo, semanas_totales, creado\nFROM insertado\nLIMIT 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1680,
+        -96
+      ],
+      "id": "543a52fe-215b-4d4c-964c-8aaafb44e96e",
+      "name": "Insertar Mesociclo Actual",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const contexto = $(\"Obtención de Contexto del Alumno\").first().json;\n\nlet entrada = {};\ntry {\n  entrada = $(\"Normalizar Entrada Rutina\").first().json || {};\n} catch (e) {\n  entrada = {};\n}\n\nconst nivel = contexto.nivel_experiencia || 'P1';\nconst restriccionesRaw = contexto.restricciones || 'Ninguna';\nconst listaRestricciones = restriccionesRaw !== 'Ninguna'\n  ? restriccionesRaw.split(',').filter(Boolean).map(r => `'${String(r).trim().replace(/'/g, \"''\")}'`).join(',')\n  : \"'Ninguna'\";\n\nconst normalizar = (valor, defecto = '') => String(valor || defecto).trim().toLowerCase()\n  .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n  .replace(/[^a-z0-9]+/g, '_')\n  .replace(/^_+|_+$/g, '');\n\nfunction normalizarObjetivo(valor) {\n  const v = normalizar(valor, 'recomposicion_corporal');\n  if (['grasa', 'perdida_grasa', 'perdida_de_grasa'].includes(v)) return 'perdida_de_grasa';\n  if (['musculo', 'musculatura', 'ganancia_masa_muscular', 'masa_muscular'].includes(v)) return 'musculatura';\n  if (['rc', 'recomposicion', 'recomposicion_corporal'].includes(v)) return 'recomposicion_corporal';\n  return v;\n}\n\nreturn {\n  id_alumno: contexto.id_alumno,\n  nivel_alumno: nivel,\n  filtro_restricciones: listaRestricciones,\n  ultima_sesion_id: contexto.ultima_sesion_id,\n  frecuencia_semanal: Number(entrada.frecuencia_semanal || contexto.frecuencia_semanal || 3),\n  objetivo: normalizarObjetivo(entrada.objetivo || contexto.objetivo),\n  enfoque_principal: normalizar(entrada.enfoque_principal || entrada.enfoque || entrada.tipo_rutina || contexto.enfoque_principal, ''),\n  enfoque_especifico: normalizar(entrada.enfoque_especifico || contexto.enfoque_especifico, ''),\n  debilidad: normalizar(entrada.debilidad || contexto.debilidad, ''),\n  prioridad_recomposicion: normalizar(entrada.prioridad_recomposicion || contexto.prioridad_recomposicion, 'musculatura')\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1888,
+        -96
+      ],
+      "id": "f15d5ab2-1b11-4454-ada1-92699ca70413",
+      "name": "Preparador de Filtros"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH niveles AS (\n    SELECT 'P1' AS codigo_nivel, 1 AS orden_nivel UNION ALL\n    SELECT 'P2', 2 UNION ALL\n    SELECT 'P3', 3 UNION ALL\n    SELECT 'I1', 3 UNION ALL\n    SELECT 'I2', 4 UNION ALL\n    SELECT '', 0\n)\nSELECT\n    e.*,\n    COALESCE((to_jsonb(e)->>'activo')::boolean, TRUE) AS activo_normalizado\nFROM adt.ejercicios e\nJOIN niveles mn_e ON mn_e.codigo_nivel = COALESCE(NULLIF(e.nivel_minimo_requerido, ''), 'P1')\nJOIN niveles mn_a ON mn_a.codigo_nivel = '{{ $json.nivel_alumno }}'\nWHERE mn_e.orden_nivel <= mn_a.orden_nivel\n  AND COALESCE(e.patron_movimiento, '') NOT IN ({{ $json.filtro_restricciones }})\n  AND COALESCE((to_jsonb(e)->>'activo')::boolean, TRUE) = TRUE\n  AND (COALESCE(e.es_axial, FALSE) = FALSE OR '{{ $json.nivel_alumno }}' != 'P1');",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2096,
+        -96
+      ],
+      "id": "0c031f04-cd25-4429-9616-004744d2b944",
+      "name": "Seleccionar Biblioteca de Ejercicios",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const filtros = $(\"Preparador de Filtros\").first().json;\nconst frecuencia = Math.max(1, Math.min(5, Number(filtros.frecuencia_semanal || 3)));\nconst objetivo = filtros.objetivo || 'recomposicion_corporal';\nconst prioridadRecomp = filtros.prioridad_recomposicion || 'musculatura';\nconst debilidad = filtros.debilidad || '';\nconst enfoqueEspecifico = filtros.enfoque_especifico || '';\nconst esPerdidaGrasa = objetivo === 'perdida_de_grasa' || (objetivo === 'recomposicion_corporal' && prioridadRecomp === 'perdida_de_grasa');\n\nconst NORMAL = {\n  full_body: ['full_body', 'fullbody', 'cuerpo_completo'],\n  torso: ['torso'],\n  pierna: ['pierna', 'piernas'],\n  pierna_torso: ['pierna_torso', 'pt'],\n  torso_pierna: ['torso_pierna', 'tp'],\n  fullbody_torso_pierna: ['fullbody_torso_pierna', 'full_body_torso_pierna', 'full_body_pierna_torso', 'fullbody_pierna_torso', 'fpt'],\n  torso_pierna_torso: ['torso_pierna_torso', 'tpt'],\n  pierna_torso_pierna: ['pierna_torso_pierna', 'ptp'],\n  pierna_torso_pierna_torso: ['pierna_torso_pierna_torso', 'ptpt'],\n  torso_torso_pierna_torso: ['torso_torso_pierna_torso', 'ttpt']\n};\n\nfunction resolverRutina() {\n  const solicitado = filtros.enfoque_principal || '';\n  for (const [tipo, alias] of Object.entries(NORMAL)) {\n    if (alias.includes(solicitado)) return tipo;\n  }\n  if (frecuencia <= 2) return 'full_body';\n  if (frecuencia === 3) return 'fullbody_torso_pierna';\n  return 'pierna_torso_pierna_torso';\n}\n\nfunction musculosPorEnfoque(valor) {\n  const v = String(valor || '').toUpperCase();\n  const out = [];\n  if (v.includes('GLUT')) out.push('GLUTEO');\n  if (v.includes('ABDOM')) out.push('ABDOMEN');\n  if (v.includes('MANGUIT') || v.includes('ROTADOR')) out.push('MANGUITO');\n  if (v.includes('ESPALD')) out.push('ESPALDA');\n  if (v.includes('HOMB')) out.push('HOMBRO');\n  if (v.includes('PECT') || v.includes('PECHO')) out.push('PECTORAL');\n  if (v.includes('BRAZ')) out.push('BICEPS', 'TRICEPS');\n  if (v.includes('BICEP')) out.push('BICEPS');\n  if (v.includes('TRICEP')) out.push('TRICEPS');\n  if (v.includes('CUAD')) out.push('CUADRICEPS');\n  if (v.includes('ISQUI')) out.push('ISQUIO');\n  if (v.includes('GASTRO') || v.includes('PANTORR')) out.push('GASTROGNEMIO');\n  return [...new Set(out)];\n}\n\nfunction normalizarMusculo(valor) {\n  if (!valor) return [];\n  return String(valor).split('/').flatMap(musculosPorEnfoque);\n}\n\nfunction slot(orden, patron, maquina, tipo, musculo = null, extra = {}) {\n  const tipoNormal = String(tipo || '').toUpperCase().replace('TERCEARIO', 'TERCIARIO').replace('TRECERIO', 'TERCIARIO');\n  return {\n    orden,\n    patron_slot: patron || null,\n    patrones: patron ? [patron] : [],\n    maquina_slot: maquina || null,\n    tipo_slot: tipoNormal ? tipoNormal.toLowerCase() : 'complementario',\n    tipo_slot_original: tipo || null,\n    musculo_slot: musculo || null,\n    musculos: normalizarMusculo(musculo),\n    ...extra\n  };\n}\n\nfunction debilidadSlot(zona) {\n  if (!debilidad) return null;\n  const musculos = musculosPorEnfoque(debilidad);\n  return {\n    orden: 1,\n    patron_slot: musculos.length ? null : 'MIXTO',\n    patrones: musculos.length ? [] : ['MIXTO'],\n    maquina_slot: null,\n    tipo_slot: 'debilidad',\n    tipo_slot_original: 'DEBILIDAD',\n    zona,\n    musculo_slot: debilidad,\n    objetivo_muscular: debilidad,\n    musculos\n  };\n}\n\nfunction complementarioSlot(orden, zona) {\n  return slot(\n    orden,\n    esPerdidaGrasa ? 'AEROBICO' : null,\n    null,\n    esPerdidaGrasa ? 'AEROBICO' : 'TERCIARIO',\n    enfoqueEspecifico || null,\n    {\n      zona,\n      objetivo_muscular: enfoqueEspecifico || null,\n      musculos: enfoqueEspecifico ? musculosPorEnfoque(enfoqueEspecifico) : []\n    }\n  );\n}\n\nfunction dia(diaNumero, diaTipo, focoDia, slotsBase, opciones = {}) {\n  const base = [];\n  const debilidadMusculos = musculosPorEnfoque(debilidad);\n  const debilidadGluteoNoAplicaTorso = diaTipo === 'torso' && debilidadMusculos.includes('GLUTEO');\n  const deb = debilidadGluteoNoAplicaTorso ? null : debilidadSlot(diaTipo);\n  const tieneDebilidad = !!deb;\n  const fallbackDebilidadDia = debilidadGluteoNoAplicaTorso\n    ? 'Debilidad gluteo no aplicada en dia torso; se evita insertar patrones de pierna en torso.'\n    : null;\n  const agregarComplementario = (orden) => {\n    if (!base.some(s => Number(s.orden) === Number(orden))) {\n      base.push(complementarioSlot(orden, diaTipo));\n    }\n  };\n\n  if (deb) base.push(deb);\n  for (const s of slotsBase) base.push({ ...s, zona: diaTipo });\n\n  if (opciones.complementario !== false) {\n    agregarComplementario(opciones.ordenComplementario || 6);\n  }\n  if (!tieneDebilidad) {\n    agregarComplementario(7);\n  }\n\n  return base.map(s => ({\n    ...s,\n    dia_numero: diaNumero,\n    dia_tipo: diaTipo,\n    foco_dia: focoDia,\n    fuente_matriz: opciones.fuente_matriz || diaTipo,\n    objetivo_muscular: s.objetivo_muscular || (s.musculos?.length ? enfoqueEspecifico || s.musculo_slot : null),\n    fallback_plan: fallbackDebilidadDia\n  }));\n}\n\nconst rutinaTipo = resolverRutina();\nconst matrices = {\n  full_body: {\n    1: [dia(1, 'full_body', 'full_body', [\n      slot(2, 'SENTADILLA', 'NO', 'PRIMARIO'),\n      slot(3, 'TRACCION', 'NO', 'PRIMARIO'),\n      slot(4, 'CADERA', 'SI', 'SECUNDARIO'),\n      slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')\n    ], { fuente_matriz: 'FULL BODY' })],\n    2: [\n      dia(1, 'full_body', 'full_body', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO', 'CUADRICEPS'), slot(3, 'TRACCION', 'NO', 'PRIMARIO'), slot(4, 'CADERA', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'FULL BODY' }),\n      dia(2, 'full_body', 'full_body', [slot(2, 'CADERA', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'SENTADILLA', 'SI', 'SECUNDARIO', 'CUADRICEPS'), slot(5, 'AGARRE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'FULL BODY' })\n    ],\n    3: [\n      dia(1, 'full_body', 'full_body', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO', 'CUADRICEPS'), slot(3, 'TRACCION', 'NO', 'PRIMARIO'), slot(4, 'CADERA', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'FULL BODY' }),\n      dia(2, 'full_body', 'full_body', [slot(2, 'AGARRE', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'SENTADILLA', 'SI', 'SECUNDARIO', 'CUADRICEPS'), slot(5, 'CADERA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'FULL BODY' }),\n      dia(3, 'full_body', 'full_body', [slot(2, 'CADERA', 'NO', 'PRIMARIO'), slot(3, 'SENTADILLA', 'NO', 'PRIMARIO', 'CUADRICEPS'), slot(4, 'AGARRE', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'FULL BODY' })\n    ]\n  },\n  pierna: {\n    1: [dia(1, 'pierna', 'mixto', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(3, 'CADERA', 'NO', 'PRIMARIO'), slot(4, 'SENTADILLA', 'SI', 'SECUNDARIO'), slot(5, 'CADERA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PIERNA', complementario: false })],\n    2: [\n      dia(1, 'pierna', 'mixto', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(3, 'CADERA', 'NO', 'PRIMARIO'), slot(4, 'SENTADILLA', 'SI', 'SECUNDARIO'), slot(5, 'CADERA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PIERNA', complementario: false }),\n      dia(2, 'pierna', 'mixto', [slot(2, 'CADERA', 'NO', 'PRIMARIO'), slot(3, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(4, 'CADERA', 'SI', 'SECUNDARIO'), slot(5, 'SENTADILLA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PIERNA', complementario: false })\n    ]\n  },\n  torso: {\n    1: [dia(1, 'torso', 'mixto', [slot(2, 'TRACCION', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'TRACCION', 'SI', 'SECUNDARIO'), slot(5, 'TRACCION', null, 'TERCIARIO', 'BICEPS'), slot(6, 'EMPUJE', null, 'TERCIARIO', 'TRICEPS')], { fuente_matriz: 'TORSO', complementario: false })],\n    2: [\n      dia(1, 'torso', 'mixto', [slot(2, 'TRACCION', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'TRACCION', 'SI', 'SECUNDARIO'), slot(5, 'TRACCION', 'NO/SI', 'TERCIARIO', 'BICEPS'), slot(6, 'EMPUJE', 'NO/SI', 'TERCIARIO', 'TRICEPS')], { fuente_matriz: 'TORSO', complementario: false }),\n      dia(2, 'torso', 'mixto', [slot(2, 'EMPUJE', 'NO', 'PRIMARIO', 'PECHO'), slot(3, 'TRACCION', 'NO', 'PRIMARIO'), slot(4, 'EMPUJE', 'SI', 'SECUNDARIO', 'HOMBRO'), slot(5, 'TRACCION', 'NO/SI', 'TERCIARIO', 'BICEPS'), slot(6, 'EMPUJE', 'NO/SI', 'TERCIARIO', 'TRICEPS')], { fuente_matriz: 'TORSO', complementario: false })\n    ],\n    3: [\n      dia(1, 'torso', 'traccion', [slot(2, 'TRACCION', 'NO', 'PRIMARIO'), slot(3, 'TRACCION', 'NO', 'SECUNDARIO'), slot(4, 'TRACCION', 'SI', 'TERCIARIO', 'HOMBRO'), slot(5, 'TRACCION', 'NO/SI', 'TERCIARIO', 'BICEPS'), slot(6, 'EMPUJE', 'NO/SI', 'TERCIARIO', 'TRICEPS')], { fuente_matriz: 'TORSO', complementario: false }),\n      dia(2, 'torso', 'empuje', [slot(2, 'EMPUJE', 'NO', 'PRIMARIO', 'PECHO'), slot(3, 'EMPUJE', 'NO', 'SECUNDARIO', 'HOMBRO'), slot(4, 'EMPUJE', 'SI', 'TERCIARIO', 'PECHO/HOMBRO'), slot(5, 'TRACCION', 'NO/SI', 'TERCIARIO', 'BICEPS'), slot(6, 'EMPUJE', 'NO/SI', 'TERCIARIO', 'TRICEPS')], { fuente_matriz: 'TORSO', complementario: false }),\n      dia(3, 'torso', 'mixto', [slot(2, 'TRACCION', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'TRACCION', 'SI', 'SECUNDARIO'), slot(5, 'TRACCION', 'NO', 'TERCIARIO', 'BICEPS'), slot(6, 'EMPUJE', null, 'TERCIARIO', 'TRICEPS')], { fuente_matriz: 'TORSO', complementario: false })\n    ]\n  }\n};\n\nconst compuestas = {\n  pierna_torso: [\n    dia(1, 'pierna', 'mixto', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(3, 'CADERA', 'NO', 'PRIMARIO'), slot(4, 'SENTADILLA', 'SI', 'SECUNDARIO'), slot(5, 'CADERA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PT', complementario: false }),\n    dia(2, 'torso', 'mixto', [slot(2, 'AGARRE', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'AGARRE', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PT' })\n  ],\n  torso_pierna: [\n    dia(1, 'torso', 'mixto', [slot(2, 'AGARRE', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'AGARRE', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'TP' }),\n    dia(2, 'pierna', 'mixto', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(3, 'CADERA', 'NO', 'PRIMARIO'), slot(4, 'SENTADILLA', 'SI', 'SECUNDARIO'), slot(5, 'CADERA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'TP', complementario: false })\n  ],\n  fullbody_torso_pierna: [\n    dia(1, 'full_body', 'full_body', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(3, 'AGARRE', 'NO', 'PRIMARIO'), slot(4, 'CADERA', 'SI', 'PRIMARIO'), slot(5, 'EMPUJE', 'SI', 'PRIMARIO')], { fuente_matriz: 'FPT' }),\n    dia(2, 'torso', 'mixto', [slot(2, 'AGARRE', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'AGARRE', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'FPT' }),\n    dia(3, 'pierna', 'mixto', [slot(2, 'CADERA', 'NO', 'PRIMARIO'), slot(3, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(4, 'CADERA', 'SI', 'SECUNDARIO'), slot(5, 'SENTADILLA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'FPT', complementario: false })\n  ],\n  torso_pierna_torso: [\n    dia(1, 'torso', 'mixto', [slot(2, 'AGARRE', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'AGARRE', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'TPT' }),\n    dia(2, 'pierna', 'mixto', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(3, 'CADERA', 'NO', 'PRIMARIO'), slot(4, 'SENTADILLA', 'SI', 'PRIMARIO'), slot(5, 'CADERA', 'SI', 'PRIMARIO')], { fuente_matriz: 'TPT', complementario: false }),\n    dia(3, 'torso', 'mixto', [slot(2, 'EMPUJE', 'NO', 'PRIMARIO'), slot(3, 'AGARRE', 'NO', 'PRIMARIO'), slot(4, 'EMPUJE', 'SI', 'SECUNDARIO'), slot(5, 'AGARRE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'TPT' })\n  ],\n  pierna_torso_pierna: [\n    dia(1, 'pierna', 'mixto', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(3, 'CADERA', 'NO', 'PRIMARIO'), slot(4, 'SENTADILLA', 'SI', 'PRIMARIO'), slot(5, 'CADERA', 'SI', 'PRIMARIO')], { fuente_matriz: 'PTP', complementario: false }),\n    dia(2, 'torso', 'mixto', [slot(2, 'AGARRE', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'AGARRE', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PTP' }),\n    dia(3, 'pierna', 'mixto', [slot(2, 'CADERA', 'NO', 'PRIMARIO'), slot(3, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(4, 'CADERA', 'SI', 'SECUNDARIO_RECOMENDADO'), slot(5, 'SENTADILLA', 'SI', 'SECUNDARIO_RECOMENDADO')], { fuente_matriz: 'PTP', complementario: false })\n  ],\n  pierna_torso_pierna_torso: [\n    dia(1, 'pierna', 'mixto', [slot(2, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(3, 'CADERA', 'NO', 'PRIMARIO'), slot(4, 'SENTADILLA', 'SI', 'SECUNDARIO'), slot(5, 'CADERA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PTPT', complementario: false }),\n    dia(2, 'torso', 'mixto', [slot(2, 'AGARRE', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'AGARRE', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PTPT' }),\n    dia(3, 'pierna', 'mixto', [slot(2, 'CADERA', 'NO', 'PRIMARIO'), slot(3, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(4, 'CADERA', 'SI', 'SECUNDARIO'), slot(5, 'SENTADILLA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PTPT', complementario: false }),\n    dia(4, 'torso', 'mixto', [slot(2, 'EMPUJE', 'NO', 'PRIMARIO'), slot(3, 'AGARRE', 'NO', 'PRIMARIO'), slot(4, 'EMPUJE', 'SI', 'SECUNDARIO'), slot(5, 'AGARRE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'PTPT' })\n  ],\n  torso_torso_pierna_torso: [\n    dia(1, 'torso', 'traccion', [slot(2, 'TRACCION', 'NO', 'PRIMARIO'), slot(3, 'TRACCION', 'NO', 'SECUNDARIO'), slot(4, 'TRACCION', 'SI', 'TERCIARIO', 'HOMBRO'), slot(5, 'TRACCION', 'NO/SI', 'TERCIARIO', 'BICEPS'), slot(6, 'EMPUJE', 'NO/SI', 'TERCIARIO', 'TRICEPS')], { fuente_matriz: 'TTPT', complementario: false }),\n    dia(2, 'torso', 'empuje', [slot(2, 'EMPUJE', 'NO', 'PRIMARIO', 'PECHO'), slot(3, 'EMPUJE', 'NO', 'SECUNDARIO', 'HOMBRO'), slot(4, 'EMPUJE', 'SI', 'TERCIARIO', 'PECHO/HOMBRO'), slot(5, 'TRACCION', 'NO/SI', 'TERCIARIO', 'BICEPS'), slot(6, 'EMPUJE', 'NO/SI', 'TERCIARIO', 'TRICEPS')], { fuente_matriz: 'TTPT', complementario: false }),\n    dia(3, 'pierna', 'mixto', [slot(2, 'CADERA', 'NO', 'PRIMARIO'), slot(3, 'SENTADILLA', 'NO', 'PRIMARIO'), slot(4, 'CADERA', 'SI', 'SECUNDARIO'), slot(5, 'SENTADILLA', 'SI', 'SECUNDARIO')], { fuente_matriz: 'TTPT', complementario: false }),\n    dia(4, 'torso', 'mixto', [slot(2, 'AGARRE', 'NO', 'PRIMARIO'), slot(3, 'EMPUJE', 'NO', 'PRIMARIO'), slot(4, 'AGARRE', 'SI', 'SECUNDARIO'), slot(5, 'EMPUJE', 'SI', 'SECUNDARIO')], { fuente_matriz: 'TTPT' })\n  ]\n};\n\nlet dias = [];\nlet advertencias = [];\nif (matrices[rutinaTipo]?.[frecuencia]) {\n  dias = matrices[rutinaTipo][frecuencia];\n} else if (rutinaTipo === 'torso' && frecuencia >= 4) {\n  dias = compuestas.torso_torso_pierna_torso;\n  advertencias.push('Torso puro no tiene matriz frecuencia 4 en Excel; se usa TTPT como estructura compatible.');\n} else if (rutinaTipo === 'pierna' && frecuencia >= 3) {\n  dias = compuestas.pierna_torso_pierna;\n  advertencias.push('Pierna pura no tiene matriz frecuencia 3 en Excel; se usa PTP como estructura compatible.');\n} else if (compuestas[rutinaTipo]) {\n  dias = compuestas[rutinaTipo];\n} else {\n  dias = matrices.full_body[Math.min(frecuencia, 3)];\n  advertencias.push('No se encontro matriz exacta; fallback a full_body compatible.');\n}\n\nif (frecuencia === 5 && ['torso', 'pierna_torso_pierna_torso', 'torso_torso_pierna_torso'].includes(rutinaTipo)) {\n  dias = [...dias.slice(0, 4), [{ dia_numero: 5, dia_tipo: 'cardio', foco_dia: 'cardio', orden: 1, tipo_slot: 'aerobico', tipo_slot_original: 'AEROBICO', zona: 'cardio', patron_slot: 'AEROBICO', patrones: ['AEROBICO'], maquina_slot: null, musculos: [], fuente_matriz: 'CARDIO_FRECUENCIA_5' }]];\n}\n\n\nfunction contextoDia(diaSlots) {\n  const ref = diaSlots[0] || {};\n  return {\n    dia_numero: ref.dia_numero,\n    dia_tipo: ref.dia_tipo,\n    foco_dia: ref.foco_dia,\n    fuente_matriz: ref.fuente_matriz\n  };\n}\n\nfunction ordenarDia(diaSlots) {\n  return [...diaSlots].sort((a, b) => Number(a.orden) - Number(b.orden));\n}\n\nfunction crearSlotDia(diaSlots, orden, patron, maquina, tipo, musculo = null, fuente = 'AJUSTE_ENFOQUE') {\n  const ctx = contextoDia(diaSlots);\n  const creado = slot(orden, patron, maquina, tipo, musculo, {\n    zona: ctx.dia_tipo,\n    objetivo_muscular: musculo || null\n  });\n  return {\n    ...creado,\n    ...ctx,\n    zona: ctx.dia_tipo,\n    fuente_matriz: `${ctx.fuente_matriz || ctx.dia_tipo}_${fuente}`\n  };\n}\n\nfunction setSlotDia(diaSlots, orden, patron, maquina, tipo, musculo = null, fuente = 'AJUSTE_ENFOQUE') {\n  const limpio = diaSlots.filter(s => Number(s.orden) !== Number(orden));\n  limpio.push(crearSlotDia(diaSlots, orden, patron, maquina, tipo, musculo, fuente));\n  return ordenarDia(limpio);\n}\n\nfunction quitarSlotDia(diaSlots, orden) {\n  return ordenarDia(diaSlots.filter(s => Number(s.orden) !== Number(orden)));\n}\n\nfunction aplicarSpecs(diaSlots, specs, fuente = 'AJUSTE_ENFOQUE') {\n  let out = diaSlots;\n  for (const spec of specs) {\n    out = setSlotDia(out, spec[0], spec[1], spec[2], spec[3], spec[4] || null, fuente);\n  }\n  return out;\n}\n\nfunction enfoqueIncluye(...tokens) {\n  const v = String(enfoqueEspecifico || '').toUpperCase();\n  return tokens.some(t => v.includes(t));\n}\n\nconst enfoqueHombro = enfoqueIncluye('HOMB');\nconst enfoquePecho = enfoqueIncluye('PECHO', 'PECT');\nconst enfoqueEspalda = enfoqueIncluye('ESPALD');\nconst enfoqueBrazos = enfoqueIncluye('BRAZ', 'BICEP', 'TRICEP');\nconst sinDebilidad = !debilidad;\nconst esMusculatura = objetivo === 'musculatura';\n\nfunction aplicarPerdidaGrasa(diaSlots) {\n  let out = diaSlots;\n  const ctx = contextoDia(out);\n  if (!esPerdidaGrasa || ctx.dia_tipo === 'cardio') return out;\n\n  out = quitarSlotDia(out, 7);\n\n  if (ctx.dia_tipo === 'pierna') {\n    const tieneSlotDebilidad = out.some(s => Number(s.orden) === 1 && String(s.tipo_slot || '').toLowerCase() === 'debilidad');\n    const ordenAerobico = tieneSlotDebilidad ? 5 : 6;\n    out = setSlotDia(out, ordenAerobico, 'AEROBICO', null, 'AEROBICO', null, 'PERDIDA_GRASA_PIERNA_MAX_5');\n    if (tieneSlotDebilidad) out = quitarSlotDia(out, 6);\n    return ordenarDia(out);\n  }\n\n  out = setSlotDia(out, 6, 'AEROBICO', null, 'AEROBICO', null, 'PERDIDA_GRASA');\n\n  if (ctx.dia_tipo === 'torso') {\n    const esDiaBrazos = (rutinaTipo === 'torso' && frecuencia === 3 && Number(ctx.dia_numero) === 3)\n      || (rutinaTipo === 'torso_torso_pierna_torso' && Number(ctx.dia_numero) === 4);\n\n    if (esDiaBrazos) {\n      out = aplicarSpecs(out, [\n        [2, 'TRACCION', null, 'PRIMARIO', 'BICEPS'],\n        [3, 'EMPUJE', null, 'PRIMARIO', 'TRICEPS'],\n        [4, 'TRACCION', null, 'SECUNDARIO', 'BICEPS'],\n        [5, 'EMPUJE', null, 'TERCIARIO', 'TRICEPS']\n      ], 'PERDIDA_GRASA_TORSO_BRAZOS');\n    } else if (ctx.foco_dia === 'empuje' || Number(ctx.dia_numero) === 2 || Number(ctx.dia_numero) === 4) {\n      out = aplicarSpecs(out, [\n        [2, 'EMPUJE', 'NO', 'PRIMARIO', 'PECHO'],\n        [3, 'TRACCION', 'NO', 'PRIMARIO', null],\n        [4, 'EMPUJE', 'SI', 'SECUNDARIO', 'HOMBRO'],\n        [5, 'TRACCION', 'SI', 'SECUNDARIO', null]\n      ], 'PERDIDA_GRASA_TORSO_EMPUJE');\n    } else {\n      out = aplicarSpecs(out, [\n        [2, 'TRACCION', 'NO', 'PRIMARIO', null],\n        [3, 'EMPUJE', 'NO', 'PRIMARIO', null],\n        [4, 'TRACCION', 'SI', 'SECUNDARIO', null],\n        [5, 'EMPUJE', 'SI', 'SECUNDARIO', null]\n      ], 'PERDIDA_GRASA_TORSO_MIXTO');\n    }\n  }\n\n  return ordenarDia(out);\n}\n\nfunction aplicarEnfoqueEspecifico(diaSlots) {\n  let out = diaSlots;\n  const ctx = contextoDia(out);\n  if (ctx.dia_tipo === 'pierna' || ctx.dia_tipo === 'cardio') return out;\n\n  if (enfoqueHombro) {\n    if (ctx.dia_tipo === 'full_body' && Number(ctx.dia_numero) === 1) {\n      if (sinDebilidad && esPerdidaGrasa) out = setSlotDia(out, 1, 'EMPUJE', null, 'TERCIARIO', 'HOMBRO', 'ENFOQUE_HOMBRO');\n      if (esPerdidaGrasa) out = setSlotDia(out, 5, 'EMPUJE', 'SI', 'SECUNDARIO', 'HOMBRO', 'ENFOQUE_HOMBRO');\n    }\n    if (ctx.dia_tipo === 'torso') {\n      out = aplicarSpecs(out, [\n        [2, 'EMPUJE', null, 'PRIMARIO', 'HOMBRO'],\n        [3, 'TRACCION', null, 'PRIMARIO', null],\n        [4, 'EMPUJE', null, 'SECUNDARIO', 'PECHO'],\n        [5, 'TRACCION', null, 'SECUNDARIO', null]\n      ], 'ENFOQUE_HOMBRO');\n      if (sinDebilidad && (esMusculatura || esPerdidaGrasa)) out = setSlotDia(out, 1, 'EMPUJE', null, 'TERCIARIO', 'HOMBRO', 'ENFOQUE_HOMBRO');\n      if (esPerdidaGrasa) out = setSlotDia(out, 6, 'AEROBICO', null, 'AEROBICO', null, 'ENFOQUE_HOMBRO');\n      else out = setSlotDia(out, 6, 'EMPUJE', null, 'TERCIARIO', 'HOMBRO', 'ENFOQUE_HOMBRO');\n      out = quitarSlotDia(out, 7);\n    }\n  }\n\n  if (enfoquePecho) {\n    if (ctx.dia_tipo === 'full_body' && sinDebilidad && (esMusculatura || esPerdidaGrasa)) {\n      out = setSlotDia(out, 1, 'EMPUJE', null, 'TERCIARIO', 'PECHO', 'ENFOQUE_PECHO');\n      out = quitarSlotDia(out, 7);\n    }\n    if (ctx.dia_tipo === 'torso') {\n      out = aplicarSpecs(out, [\n        [2, 'EMPUJE', null, 'PRIMARIO', 'PECHO'],\n        [3, 'TRACCION', null, 'PRIMARIO', null],\n        [4, 'EMPUJE', null, 'SECUNDARIO', 'PECHO'],\n        [5, 'TRACCION', null, 'SECUNDARIO', null]\n      ], 'ENFOQUE_PECHO');\n      if (sinDebilidad && (esMusculatura || esPerdidaGrasa)) out = setSlotDia(out, 1, 'EMPUJE', null, 'TERCIARIO', 'PECHO', 'ENFOQUE_PECHO');\n      if (esPerdidaGrasa) out = setSlotDia(out, 6, 'AEROBICO', null, 'AEROBICO', null, 'ENFOQUE_PECHO');\n      else out = setSlotDia(out, 6, 'EMPUJE', null, 'TERCIARIO', 'PECHO', 'ENFOQUE_PECHO');\n      out = quitarSlotDia(out, 7);\n    }\n  }\n\n  if (enfoqueEspalda) {\n    if (ctx.dia_tipo === 'full_body' && sinDebilidad && esPerdidaGrasa) {\n      out = setSlotDia(out, 1, 'TRACCION', null, 'TERCIARIO', 'ESPALDA', 'ENFOQUE_ESPALDA');\n      out = quitarSlotDia(out, 7);\n    }\n    if (ctx.dia_tipo === 'torso') {\n      out = aplicarSpecs(out, [\n        [2, 'TRACCION', null, 'PRIMARIO', 'ESPALDA'],\n        [3, 'EMPUJE', null, 'PRIMARIO', 'PECHO'],\n        [4, 'TRACCION', null, 'SECUNDARIO', 'ESPALDA'],\n        [5, 'EMPUJE', null, 'SECUNDARIO', 'PECHO']\n      ], 'ENFOQUE_ESPALDA');\n      if (sinDebilidad && esPerdidaGrasa) out = setSlotDia(out, 1, 'TRACCION', null, 'TERCIARIO', 'ESPALDA', 'ENFOQUE_ESPALDA');\n      if (esPerdidaGrasa) out = setSlotDia(out, 6, 'AEROBICO', null, 'AEROBICO', null, 'ENFOQUE_ESPALDA');\n      else out = setSlotDia(out, 6, 'TRACCION', null, 'TERCIARIO', 'ESPALDA', 'ENFOQUE_ESPALDA');\n      out = quitarSlotDia(out, 7);\n    }\n  }\n\n  if (enfoqueBrazos) {\n    if (ctx.dia_tipo === 'full_body' && Number(ctx.dia_numero) === 1) {\n      if (esPerdidaGrasa) {\n        out = aplicarSpecs(out, [\n          [2, 'SENTADILLA', 'NO', 'PRIMARIO', null],\n          [3, 'CADERA', 'NO', 'PRIMARIO', null],\n          [4, 'TRACCION', null, 'TERCIARIO', 'BICEPS'],\n          [5, 'EMPUJE', null, 'TERCIARIO', 'TRICEPS'],\n          [6, 'AEROBICO', null, 'AEROBICO', null]\n        ], 'ENFOQUE_BRAZOS');\n        out = quitarSlotDia(out, 7);\n      } else if (esMusculatura) {\n        out = aplicarSpecs(out, [\n          [2, 'SENTADILLA', 'NO', 'PRIMARIO', null],\n          [3, 'CADERA', 'NO', 'PRIMARIO', null],\n          [4, 'TRACCION', null, 'SECUNDARIO', 'ESPALDA'],\n          [5, 'TRACCION', null, 'TERCIARIO', 'BICEPS'],\n          [6, 'EMPUJE', null, 'TERCIARIO', 'TRICEPS']\n        ], 'ENFOQUE_BRAZOS');\n        out = quitarSlotDia(out, 7);\n      }\n    }\n    if (ctx.dia_tipo === 'torso') {\n      if (esPerdidaGrasa) {\n        out = aplicarSpecs(out, [\n          [4, 'TRACCION', null, 'TERCIARIO', 'BICEPS'],\n          [5, 'EMPUJE', null, 'TERCIARIO', 'TRICEPS'],\n          [6, 'AEROBICO', null, 'AEROBICO', null]\n        ], 'ENFOQUE_BRAZOS');\n        out = quitarSlotDia(out, 7);\n      } else if (esMusculatura) {\n        out = aplicarSpecs(out, [\n          [5, 'TRACCION', null, 'TERCIARIO', 'BICEPS'],\n          [6, 'EMPUJE', null, 'TERCIARIO', 'TRICEPS']\n        ], 'ENFOQUE_BRAZOS');\n        out = quitarSlotDia(out, 7);\n      }\n    }\n  }\n\n  return ordenarDia(out);\n}\n\nfunction normalizarReglasFinalesDia(diaSlots) {\n  let out = ordenarDia(diaSlots);\n  const ctx = contextoDia(out);\n  const esTipo = tipo => String(tipo || '').toLowerCase();\n  const esAerobicoSlot = s => esTipo(s.tipo_slot) === 'aerobico' || String(s.patron_slot || '').toUpperCase() === 'AEROBICO';\n  const maxDia = ctx.dia_tipo === 'pierna' ? 5 : (ctx.dia_tipo === 'cardio' ? 1 : 6);\n  const objetivoDia = esPerdidaGrasa\n    ? (ctx.dia_tipo === 'pierna' ? 5 : (ctx.dia_tipo === 'cardio' ? 1 : 6))\n    : (ctx.dia_tipo === 'pierna' ? 5 : 6);\n\n  if (ctx.dia_tipo === 'torso') {\n    out = out.filter(s => {\n      const patron = String(s.patron_slot || '').toUpperCase();\n      const musculos = (s.musculos || []).map(m => String(m).toUpperCase());\n      const esDebilidadGluteo = esTipo(s.tipo_slot) === 'debilidad' && musculos.includes('GLUTEO');\n      return !['SENTADILLA', 'CADERA'].includes(patron) && !esDebilidadGluteo;\n    });\n  }\n\n  if (ctx.dia_tipo === 'pierna') {\n    out = out.filter(s => {\n      const musculos = (s.musculos || []).map(m => String(m).toUpperCase());\n      const musculoTorso = musculos.some(m => ['ESPALDA', 'PECTORAL', 'PECHO', 'HOMBRO', 'BICEPS', 'TRICEPS', 'MANGUITO'].includes(m));\n      return !musculoTorso || esAerobicoSlot(s);\n    });\n  }\n\n  let aerobico = out.find(esAerobicoSlot) || null;\n  out = out.filter(s => !esAerobicoSlot(s));\n\n  if (esPerdidaGrasa && ctx.dia_tipo !== 'cardio' && !aerobico) {\n    aerobico = crearSlotDia(out.length ? out : diaSlots, maxDia, 'AEROBICO', null, 'AEROBICO', null, 'NORMALIZACION_AEROBICO');\n  }\n\n  const patronesTorso = ['TRACCION', 'EMPUJE', 'TRACCION', 'EMPUJE'];\n  const musculosTorso = enfoqueEspalda\n    ? ['ESPALDA', 'PECHO', 'ESPALDA', 'PECHO']\n    : enfoqueHombro\n      ? ['HOMBRO', null, 'PECHO', null]\n      : enfoquePecho\n        ? ['PECHO', null, 'PECHO', null]\n        : [null, null, null, null];\n  const patronesPierna = ['CADERA', 'SENTADILLA', 'CADERA', 'SENTADILLA'];\n  const patronesFullBody = ['SENTADILLA', 'AGARRE', 'CADERA', 'EMPUJE'];\n\n  function rellenarHastaObjetivo() {\n    let guard = 0;\n    while (out.length + (aerobico ? 1 : 0) < objetivoDia && guard < 10) {\n      guard++;\n      const posicion = out.length;\n      let patron = null;\n      let maquina = null;\n      let tipo = posicion < 2 ? 'PRIMARIO' : 'SECUNDARIO';\n      let musculo = null;\n      if (ctx.dia_tipo === 'torso') {\n        patron = patronesTorso[posicion % patronesTorso.length];\n        musculo = musculosTorso[posicion % musculosTorso.length];\n      } else if (ctx.dia_tipo === 'pierna') {\n        patron = patronesPierna[posicion % patronesPierna.length];\n      } else if (ctx.dia_tipo === 'full_body') {\n        patron = patronesFullBody[posicion % patronesFullBody.length];\n      } else if (ctx.dia_tipo === 'cardio') {\n        patron = 'AEROBICO';\n        tipo = 'AEROBICO';\n      }\n      out.push(crearSlotDia(out.length ? out : diaSlots, out.length + 1, patron, maquina, tipo, musculo, 'NORMALIZACION_CONTEO'));\n    }\n  }\n\n  rellenarHastaObjetivo();\n\n  if (aerobico) {\n    const fuerzaMax = Math.max(0, maxDia - 1);\n    out = out.slice(0, fuerzaMax);\n    out.push({\n      ...aerobico,\n      orden: maxDia,\n      fallback_plan: [aerobico.fallback_plan, ctx.dia_tipo === 'pierna' ? 'Aerobico reemplaza ultimo slot de pierna para mantener maximo 5 ejercicios.' : null].filter(Boolean).join(' | ')\n    });\n  } else {\n    out = out.slice(0, maxDia);\n  }\n\n  return ordenarDia(out).map((s, idx) => ({\n    ...s,\n    orden: idx + 1,\n    orden_original_ajustada: s.orden_original_ajustada || s.orden\n  }));\n}\n\ndias = dias.map(d => normalizarReglasFinalesDia(aplicarEnfoqueEspecifico(aplicarPerdidaGrasa(d))));\n\nconst slots = dias.flat();\nconst patrones = [...new Set(slots.flatMap(s => s.patrones || []))];\nconst patronesConsulta = [...new Set([...patrones, ...(patrones.includes('AGARRE') ? ['TRACCION'] : [])])];\nconst musculos = [...new Set(slots.flatMap(s => s.musculos || []))];\nconst sqlList = arr => arr.length ? arr.map(p => `'${String(p).replace(/'/g, \"''\")}'`).join(',') : \"''\";\n\nreturn {\n  rutina_tipo: rutinaTipo,\n  frecuencia,\n  objetivo,\n  prioridad_recomposicion: prioridadRecomp,\n  enfoque_principal: filtros.enfoque_principal,\n  enfoque_especifico: enfoqueEspecifico,\n  debilidad,\n  dias_planificados: dias,\n  estructura: patrones,\n  patrones_consulta: patronesConsulta,\n  musculos_objetivo: musculos,\n  patrones_sql: sqlList(patronesConsulta),\n  musculos_sql: sqlList(musculos),\n  advertencias\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2304,
+        -96
+      ],
+      "id": "78f649e0-9092-48a7-b2ab-1fceed6a15e4",
+      "name": "Definidor de Estructura"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH niveles AS (\n    SELECT 'P1' AS codigo_nivel, 1 AS orden_nivel UNION ALL\n    SELECT 'P2', 2 UNION ALL\n    SELECT 'P3', 3 UNION ALL\n    SELECT 'I1', 3 UNION ALL\n    SELECT 'I2', 4 UNION ALL\n    SELECT '', 0\n)\nSELECT\n    e.id_ejercicio,\n    e.nombre,\n    e.multi_mono,\n    e.patron_movimiento,\n    e.tren,\n    e.articulacion,\n    e.grupo_muscular_primario,\n    e.grupo_muscular_secundario,\n    NULLIF(to_jsonb(e)->>'grupo_muscular_terciario', '') AS grupo_muscular_terciario,\n    e.maquina,\n    e.equipo_necesario,\n    NULLIF(to_jsonb(e)->>'accesorio', '') AS accesorio,\n    e.unilateral_bilateral,\n    e.dificultad,\n    COALESCE(e.es_axial, FALSE) AS es_axial,\n    COALESCE(NULLIF(e.nivel_minimo_requerido, ''), 'P1') AS nivel_minimo_requerido,\n    COALESCE((to_jsonb(e)->>'es_primario')::boolean, FALSE) AS es_primario,\n    COALESCE((to_jsonb(e)->>'es_secundario')::boolean, FALSE) AS es_secundario,\n    COALESCE((to_jsonb(e)->>'es_terciario')::boolean, FALSE) AS es_terciario,\n    COALESCE((to_jsonb(e)->>'activo')::boolean, TRUE) AS activo\nFROM adt.ejercicios e\nJOIN niveles mn_e ON mn_e.codigo_nivel = COALESCE(NULLIF(e.nivel_minimo_requerido, ''), 'P1')\nJOIN niveles mn_a ON mn_a.codigo_nivel = '{{ $node[\"Preparador de Filtros\"].json[\"nivel_alumno\"] }}'\nWHERE mn_e.orden_nivel <= mn_a.orden_nivel\n  AND COALESCE((to_jsonb(e)->>'activo')::boolean, TRUE) = TRUE\n  AND COALESCE(e.patron_movimiento, '') NOT IN ({{ $node[\"Preparador de Filtros\"].json[\"filtro_restricciones\"] }})\n  AND (\n    e.patron_movimiento IN ({{ $node[\"Definidor de Estructura\"].json.patrones_sql }})\n    OR e.grupo_muscular_primario IN ({{ $node[\"Definidor de Estructura\"].json.musculos_sql }})\n    OR e.grupo_muscular_secundario IN ({{ $node[\"Definidor de Estructura\"].json.musculos_sql }})\n    OR NULLIF(to_jsonb(e)->>'grupo_muscular_terciario', '') IN ({{ $node[\"Definidor de Estructura\"].json.musculos_sql }})\n    OR e.patron_movimiento = 'AEROBICO'\n  )\nORDER BY\n    CASE COALESCE(e.dificultad, 'BAJA') WHEN 'BAJA' THEN 1 WHEN 'MEDIA' THEN 2 WHEN 'ALTA' THEN 3 ELSE 2 END,\n    CASE\n      WHEN COALESCE((to_jsonb(e)->>'es_primario')::boolean, FALSE) THEN 1\n      WHEN COALESCE((to_jsonb(e)->>'es_secundario')::boolean, FALSE) THEN 2\n      WHEN COALESCE((to_jsonb(e)->>'es_terciario')::boolean, FALSE) THEN 3\n      ELSE 4\n    END,\n    e.id_ejercicio ASC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2512,
+        -96
+      ],
+      "id": "2a951ab4-982e-4c58-b9ae-73a6e7472329",
+      "name": "Selección Técnica",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const nivelRaw = $(\"Obtención de Contexto del Alumno\").first().json[\"nivel_experiencia\"] || 'P1';\nconst nivel = nivelRaw === 'P3' ? 'I1' : nivelRaw;\n\nconst tablasRIR = {\n  P1: { min: [4, 4, 4, 4, 4, 4], max: [5, 5, 5, 5, 5, 5] },\n  P2: { min: [3, 3, 3, 3, 3, 3], max: [4, 4, 4, 4, 4, 4] },\n  I1: { min: [4, 3, 3, 2, 1, 0], max: [4, 3, 3, 2, 1, 0] },\n  I2: { min: [4, 3, 3, 2, 1, 0], max: [4, 3, 3, 2, 1, 0] }\n};\n\nconst tabla = tablasRIR[nivel] || tablasRIR.P1;\n\nreturn {\n  rir_semanal: tabla.max,\n  rir_semanal_min: tabla.min,\n  rir_semanal_max: tabla.max,\n  nivel,\n  semanas_totales: 6,\n  tecnicas_avanzadas_habilitadas: ['I1', 'I2'].includes(nivel)\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2720,
+        -96
+      ],
+      "id": "937ead5b-7e56-4799-8825-a9fa456e98e5",
+      "name": "Asignador de RIR"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH logs_base AS (\n    SELECT\n        be.id_ejercicio,\n        be.id_bloque,\n        be.id_mesociclo,\n        be.semana_meso,\n        be.series AS series_planificadas,\n        be.reps_min,\n        be.reps_max,\n        be.peso_sugerido_inicial,\n        be.tipo_slot,\n        be.tempo,\n        be.descanso_seg,\n        be.duracion_objetivo_min,\n        l.id_log,\n        l.fecha_realizada,\n        DATE_TRUNC('week', l.fecha_realizada)::date AS iso_semana_inicio,\n        COALESCE(l.reps_promedio, l.reps_logradas::numeric) AS reps_observadas,\n        COALESCE(l.series_realizadas, be.series) AS series_observadas,\n        l.peso_utilizado,\n        l.rir_reportado,\n        l.rpe_reportado,\n        l.duracion_realizada_min\n    FROM adt.log_entrenamiento l\n    JOIN adt.bloques_ejercicios be ON l.id_bloque = be.id_bloque\n    JOIN adt.mesociclos m ON be.id_mesociclo = m.id_mesociclo\n    JOIN adt.macrociclos mc ON m.id_macrociclo = mc.id_macrociclo\n    WHERE mc.id_alumno = {{ $(\"Obtención de Contexto del Alumno\").first().json[\"id_alumno\"] }}\n), semanal AS (\n    SELECT\n        id_ejercicio,\n        iso_semana_inicio,\n        MAX(fecha_realizada) AS ultima_fecha,\n        AVG(reps_observadas) AS reps_promedio_semana,\n        MAX(series_observadas) AS series_realizadas_semana,\n        AVG(peso_utilizado) FILTER (WHERE peso_utilizado IS NOT NULL) AS peso_promedio_semana,\n        MAX(peso_utilizado) FILTER (WHERE peso_utilizado IS NOT NULL) AS peso_max_semana,\n        AVG(rir_reportado) FILTER (WHERE rir_reportado IS NOT NULL) AS rir_promedio_semana,\n        AVG(rpe_reportado) FILTER (WHERE rpe_reportado IS NOT NULL) AS rpe_promedio_semana,\n        MAX(semana_meso) AS semana_meso_origen,\n        MAX(reps_min) AS reps_min_origen,\n        MAX(reps_max) AS reps_max_origen,\n        MAX(series_planificadas) AS series_origen,\n        MAX(duracion_objetivo_min) AS duracion_objetivo_min_origen,\n        MAX(duracion_realizada_min) AS duracion_realizada_min\n    FROM logs_base\n    GROUP BY id_ejercicio, iso_semana_inicio\n), ultimas AS (\n    SELECT\n        s.*,\n        ROW_NUMBER() OVER (PARTITION BY id_ejercicio ORDER BY iso_semana_inicio DESC) AS rn\n    FROM semanal s\n), ultimas_dos AS (\n    SELECT\n        id_ejercicio,\n        COUNT(*) FILTER (WHERE reps_promedio_semana IS NOT NULL) AS semanas_con_datos,\n        MAX(reps_promedio_semana) FILTER (WHERE rn = 1) AS reps_promedio_ultima,\n        MAX(series_realizadas_semana) FILTER (WHERE rn = 1) AS series_ultima,\n        MAX(peso_max_semana) FILTER (WHERE rn = 1) AS peso_referencia,\n        MAX(rir_promedio_semana) FILTER (WHERE rn = 1) AS rir_promedio_ultima,\n        MAX(rpe_promedio_semana) FILTER (WHERE rn = 1) AS rpe_promedio_ultima,\n        MAX(reps_min_origen) FILTER (WHERE rn = 1) AS reps_min_origen,\n        MAX(reps_max_origen) FILTER (WHERE rn = 1) AS reps_max_origen,\n        MAX(series_origen) FILTER (WHERE rn = 1) AS series_origen,\n        MAX(duracion_objetivo_min_origen) FILTER (WHERE rn = 1) AS duracion_objetivo_min_origen,\n        MAX(duracion_realizada_min) FILTER (WHERE rn = 1) AS duracion_realizada_min,\n        MAX(iso_semana_inicio) FILTER (WHERE rn = 1) AS iso_semana_ultima,\n        JSONB_AGG(\n            JSONB_BUILD_OBJECT(\n                'iso_semana_inicio', iso_semana_inicio,\n                'reps_promedio', reps_promedio_semana,\n                'series', series_realizadas_semana,\n                'peso', peso_max_semana,\n                'rir', rir_promedio_semana\n            ) ORDER BY iso_semana_inicio DESC\n        ) FILTER (WHERE rn <= 2) AS ultimas_dos_semanas\n    FROM ultimas\n    WHERE rn <= 2\n    GROUP BY id_ejercicio\n), evaluacion AS (\n    SELECT DISTINCT ON (em.id_ejercicio)\n        em.id_ejercicio,\n        em.peso_manejado AS peso_evaluacion,\n        em.reps_logradas AS reps_evaluacion,\n        em.rpe_observado AS rpe_evaluacion\n    FROM adt.evaluaciones_movimiento em\n    WHERE em.id_sesion = {{ $(\"Obtención de Contexto del Alumno\").first().json.ultima_sesion_id || 0 }}\n    ORDER BY em.id_ejercicio, em.id_mov_eval DESC\n)\nSELECT\n    COALESCE(u.id_ejercicio, e.id_ejercicio) AS id_ejercicio,\n    COALESCE(u.peso_referencia, e.peso_evaluacion, 0) AS peso_referencia,\n    u.reps_promedio_ultima,\n    u.series_ultima,\n    u.rir_promedio_ultima,\n    u.rpe_promedio_ultima,\n    u.reps_min_origen,\n    u.reps_max_origen,\n    u.series_origen,\n    u.duracion_objetivo_min_origen,\n    u.duracion_realizada_min,\n    u.iso_semana_ultima,\n    u.ultimas_dos_semanas,\n    e.peso_evaluacion,\n    e.reps_evaluacion,\n    e.rpe_evaluacion\nFROM ultimas_dos u\nFULL OUTER JOIN evaluacion e ON e.id_ejercicio = u.id_ejercicio\nWHERE COALESCE(u.id_ejercicio, e.id_ejercicio) IS NOT NULL;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2928,
+        -96
+      ],
+      "id": "6c934c60-ac38-403d-b43e-3726a089f1a2",
+      "name": "Obtener Referencia de Carga",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const plan = $(\"Definidor de Estructura\").first().json;\nconst datosRIR = $(\"Asignador de RIR\").first().json;\nconst candidatos = $(\"Selección Técnica\").all().map(item => item.json);\nconst referencias = new Map($(\"Obtener Referencia de Carga\").all().filter(item => item.json.id_ejercicio).map(item => [String(item.json.id_ejercicio), item.json]));\nconst ejerciciosMesoPrevio = new Set($(\"Ejercicios Mesociclo Previo\").all().map(item => item.json.id_ejercicio).filter(Boolean).map(String));\nlet numeroMeso = 1;\ntry {\n  numeroMeso = Number($(\"Insertar Mesociclo Actual\").first().json.numero_meso_en_macro || $(\"Code in JavaScript\").first().json.numero_meso || 1);\n} catch (e) {\n  numeroMeso = 1;\n}\nconst mesoMetodo = Math.max(1, Math.min(3, numeroMeso));\n\nconst limpiar = valor => String(valor || '').toUpperCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\nconst nivelMetodoRaw = limpiar(datosRIR.nivel || 'P1');\nconst nivelMetodo = nivelMetodoRaw === 'P3' ? 'I1' : nivelMetodoRaw;\nconst contiene = (valor, buscado) => limpiar(valor).includes(limpiar(buscado));\nfunction canonTipo(tipo) {\n  const t = limpiar(tipo).replace('SECUNDARIO_RECOMENDADO', 'SECUNDARIO').replace('TERCEARIO', 'TERCIARIO').replace('TRECERIO', 'TERCIARIO');\n  return t;\n}\nfunction esMaquina(ej) { return limpiar(ej.maquina) === 'SI' || limpiar(ej.maquina) === 'TRUE'; }\nfunction coincidePatron(ej, slot) {\n  const patron = limpiar(ej.patron_movimiento);\n  const solicitado = limpiar(slot.patron_slot || slot.patrones?.[0]);\n  if (!solicitado) return true;\n  if (patron === solicitado || contiene(ej.nombre, solicitado)) return true;\n  if (solicitado === 'AGARRE' && patron === 'TRACCION') return true;\n  return false;\n}\nfunction fallbackPatron(ej, slot) {\n  return limpiar(slot.patron_slot) === 'AGARRE' && limpiar(ej.patron_movimiento) === 'TRACCION';\n}\nfunction coincideMusculo(ej, musculos = []) {\n  return musculos.some(m => contiene(ej.grupo_muscular_primario, m) || contiene(ej.grupo_muscular_secundario, m) || contiene(ej.grupo_muscular_terciario, m) || contiene(ej.nombre, m));\n}\nfunction coincideTipo(ej, slot) {\n  const tipo = canonTipo(slot.tipo_slot_original || slot.tipo_slot);\n  if (tipo === 'PRIMARIO') return !!ej.es_primario;\n  if (tipo === 'SECUNDARIO') return !!ej.es_secundario;\n  if (tipo === 'TERCIARIO') return !!ej.es_terciario;\n  if (tipo === 'AEROBICO') return limpiar(ej.patron_movimiento) === 'AEROBICO';\n  if (tipo === 'DEBILIDAD') return true;\n  return true;\n}\nfunction coincideMaquina(ej, slot) {\n  const req = limpiar(slot.maquina_slot);\n  if (!req || req === 'NO/SI') return true;\n  if (req === 'SI') return esMaquina(ej);\n  if (req === 'NO') return !esMaquina(ej);\n  return true;\n}\n\nconst MUSCULOS_PIERNA = new Set(['CUADRICEPS', 'ISQUIO', 'ISQUIOTIBIAL', 'GLUTEO', 'ADUCTOR', 'GASTROCNEMIO', 'GASTROGNEMIO', 'PANTORRILLA']);\nconst MUSCULOS_TORSO = new Set(['ESPALDA', 'PECTORAL', 'PECHO', 'HOMBRO', 'BICEPS', 'TRICEPS', 'MANGUITO']);\nfunction gruposEjercicio(ej) {\n  return [ej.grupo_muscular_primario, ej.grupo_muscular_secundario, ej.grupo_muscular_terciario]\n    .flatMap(v => limpiar(v).split(/[^A-Z0-9]+/))\n    .filter(v => v && v !== 'NO');\n}\nfunction compatibleZona(ej, slot) {\n  const dia = limpiar(slot.dia_tipo || slot.zona);\n  const tipo = canonTipo(slot.tipo_slot_original || slot.tipo_slot);\n  const patron = limpiar(ej.patron_movimiento);\n  if (tipo === 'AEROBICO') return true;\n  const grupos = gruposEjercicio(ej);\n  const grupoPrincipal = limpiar(ej.grupo_muscular_primario);\n  if (dia === 'TORSO') {\n    if (['SENTADILLA', 'CADERA'].includes(patron)) return false;\n    if (MUSCULOS_PIERNA.has(grupoPrincipal)) return false;\n    if (tipo === 'DEBILIDAD' && coincideMusculo(ej, ['GLUTEO'])) return false;\n    return true;\n  }\n  if (dia === 'PIERNA') {\n    if (tipo === 'DEBILIDAD') return !MUSCULOS_TORSO.has(grupoPrincipal);\n    return !grupos.some(g => MUSCULOS_TORSO.has(g));\n  }\n  return true;\n}\nconst REGLAS_MESOCICLO = {\n  P1: {\n    1: { dif: ['BAJA'], maq: { 2: 'SI', 3: 'SI', 4: 'SI', 5: 'SI', 6: 'NO', 7: 'NO' } },\n    2: { dif: ['BAJA'], maq: { 2: 'SI', 3: 'SI', 4: 'SI', 5: 'NO', 6: 'NO' }, mono: { 2: true, 3: true, 4: true } },\n    3: { dif: ['BAJA'], maq: { 2: 'SI', 3: 'SI', 4: 'NO', 5: 'NO' } }\n  },\n  P2: {\n    1: { difPorOrden: { 1: ['MEDIA'], 2: ['MEDIA'], 3: ['MEDIA'], 4: ['BAJA'], 5: ['BAJA'], 6: ['BAJA'], 7: ['BAJA'] }, maq: { 2: 'SI', 3: 'SI', 4: 'SI' } },\n    2: { dif: ['MEDIA'], difPorOrden: { 7: ['BAJA'] }, maq: { 2: 'SI', 3: 'SI', 4: 'SI' }, mono: { 2: true, 3: true, 4: true } },\n    3: { dif: ['MEDIA'], difPorOrden: { 7: ['BAJA'] }, maq: { 2: 'NO', 3: 'NO' } }\n  },\n  I1: {\n    1: { dif: ['ALTA', 'MEDIA', 'BAJA'], difPorOrden: { 2: ['ALTA', 'MEDIA'], 3: ['ALTA', 'MEDIA'], 4: ['MEDIA'], 5: ['MEDIA'] }, maq: { 3: 'SI' }, repite: { 1: 'NO', 2: 'SI', 3: 'NO', 4: 'NO', 5: 'NO', 6: 'NO', 7: 'NO' } },\n    2: { dif: ['ALTA', 'MEDIA', 'BAJA'], difPorOrden: { 2: ['ALTA', 'MEDIA'], 3: ['ALTA', 'MEDIA'], 4: ['ALTA'], 5: ['MEDIA'] }, mono: { 3: true, 4: true }, repite: { 1: 'NO', 2: 'SI', 3: 'NO', 4: 'NO', 5: 'NO', 6: 'NO', 7: 'NO' } },\n    3: { dif: ['ALTA', 'MEDIA', 'BAJA'], difPorOrden: { 2: ['ALTA', 'MEDIA'], 3: ['ALTA', 'MEDIA'], 4: ['ALTA', 'MEDIA'], 5: ['ALTA', 'MEDIA'] }, maq: { 2: 'SI', 3: 'NO' }, repite: { 1: 'NO', 2: 'SI', 3: 'NO', 4: 'NO', 5: 'NO', 6: 'NO', 7: 'NO' } }\n  },\n  I2: {\n    1: { dif: ['ALTA', 'MEDIA', 'BAJA'], difPorOrden: { 2: ['ALTA'], 3: ['ALTA'], 4: ['ALTA', 'MEDIA'], 5: ['ALTA', 'MEDIA'] }, maq: { 3: 'SI' }, repite: { 1: 'NO', 2: 'SI', 3: 'SI', 4: 'NO', 5: 'NO', 6: 'NO', 7: 'NO' } },\n    2: { dif: ['ALTA', 'MEDIA', 'BAJA'], difPorOrden: { 2: ['ALTA'], 3: ['ALTA'], 4: ['ALTA', 'MEDIA'], 5: ['ALTA', 'MEDIA'] }, mono: { 4: true, 5: true }, repite: { 1: 'NO', 2: 'SI', 3: 'SI', 4: 'NO', 5: 'NO', 6: 'NO', 7: 'NO' } },\n    3: { dif: ['ALTA', 'MEDIA', 'BAJA'], difPorOrden: { 1: ['MEDIA'], 2: ['ALTA'], 3: ['ALTA'], 4: ['ALTA', 'MEDIA'], 5: ['ALTA', 'MEDIA'] }, repite: { 1: 'NO', 2: 'SI', 3: 'SI', 4: 'NO', 5: 'NO', 6: 'NO', 7: 'NO' } }\n  }\n};\nfunction reglaMesociclo(slot) {\n  const nivel = REGLAS_MESOCICLO[nivelMetodo] ? nivelMetodo : 'P1';\n  const base = REGLAS_MESOCICLO[nivel]?.[mesoMetodo] || REGLAS_MESOCICLO[nivel]?.[1] || {};\n  const orden = Number(slot.orden || slot.orden_matriz || slot.orden_ejercicio || 0);\n  return {\n    orden,\n    dif: base.difPorOrden?.[orden] || base.dif || null,\n    maquina: base.maq?.[orden] || null,\n    mono: !!base.mono?.[orden],\n    repite: base.repite?.[orden] || null\n  };\n}\nfunction cumpleDificultad(ej, permitidas) {\n  if (!permitidas || !permitidas.length) return true;\n  return permitidas.includes(limpiar(ej.dificultad));\n}\nfunction esMonoarticular(ej) {\n  const multiMono = limpiar(ej.multi_mono);\n  const articulacion = limpiar(ej.articulacion);\n  return multiMono.includes('MONO') || articulacion.includes('UNI');\n}\nfunction cumpleReglaMesociclo(ej, slot) {\n  const regla = reglaMesociclo(slot);\n  if (!cumpleDificultad(ej, regla.dif)) return false;\n  if (regla.maquina === 'SI' && !esMaquina(ej)) return false;\n  if ((regla.maquina === 'NO' || regla.maquina === 'LIBRE') && esMaquina(ej)) return false;\n  if (regla.mono && !esMonoarticular(ej)) return false;\n  if (regla.repite === 'NO' && ejerciciosMesoPrevio.has(String(ej.id_ejercicio))) return false;\n  return true;\n}\nfunction scoreMesociclo(ej, slot) {\n  const regla = reglaMesociclo(slot);\n  let score = cumpleReglaMesociclo(ej, slot) ? 20 : -1000;\n  if (regla.repite === 'SI' && ejerciciosMesoPrevio.has(String(ej.id_ejercicio))) score += 45;\n  return score;\n}\nfunction scoreEjercicio(ej, slot, usadosDia, usadosMicrociclo) {\n  let score = 0;\n  if (usadosDia.has(ej.id_ejercicio)) score -= 1000;\n  if (usadosMicrociclo.has(ej.id_ejercicio)) score -= 1000;\n  if (!compatibleZona(ej, slot)) score -= 1000; else score += 18;\n  score += scoreMesociclo(ej, slot);\n  if (coincidePatron(ej, slot)) score += fallbackPatron(ej, slot) ? 25 : 55;\n  if (coincideMaquina(ej, slot)) score += 24; else score -= 18;\n  if (coincideTipo(ej, slot)) score += 32; else score -= 10;\n  if (coincideMusculo(ej, slot.musculos)) score += 30;\n  if (slot.tipo_slot === 'debilidad') score += 20;\n  if (ej.es_axial && nivelMetodo === 'P1') score -= 25;\n  if (limpiar(ej.dificultad) === 'BAJA') score += 8;\n  if (limpiar(ej.dificultad) === 'MEDIA') score += 4;\n  return score;\n}\nfunction elegirEjercicio(slot, usadosDia, usadosMicrociclo) {\n  return [...candidatos]\n    .map(ej => ({ ej, score: scoreEjercicio(ej, slot, usadosDia, usadosMicrociclo) }))\n    .filter(x => x.score > -500 && coincidePatron(x.ej, slot) && compatibleZona(x.ej, slot) && cumpleReglaMesociclo(x.ej, slot))\n    .sort((a, b) => b.score - a.score || a.ej.id_ejercicio - b.ej.id_ejercicio)[0];\n}\n\nfunction clamp(n, min, max) {\n  return Math.max(min, Math.min(max, n));\n}\nfunction round2(n) {\n  return Number(n || 0).toFixed(2);\n}\nfunction parseHistDos(hist) {\n  if (!hist) return [];\n  if (Array.isArray(hist)) return hist;\n  if (typeof hist === 'string') {\n    try { return JSON.parse(hist); } catch (e) { return []; }\n  }\n  return [];\n}\nfunction descansoPorRir(rirMin, rirMax, esMulti, esAerobico) {\n  if (esAerobico) return 0;\n  const rir = Math.round(((Number(rirMin) || 0) + (Number(rirMax) || 0)) / 2);\n  if (rir >= 3) return esMulti ? 90 : 60;\n  if (rir === 2) return esMulti ? 120 : 90;\n  if (rir === 1) return esMulti ? 150 : 90;\n  return esMulti ? 180 : 120;\n}\nfunction rangoInicial(nivel, esMono) {\n  if (nivel === 'P2') return esMono ? [10, 12] : [8, 10];\n  if (nivel === 'P1') return esMono ? [12, 15] : [10, 12];\n  return esMono ? [10, 12] : [8, 12];\n}\nfunction umbralBajo(nivel, esMono, repsMin, repsMax) {\n  if (nivel === 'P2' && !esMono && repsMin === 8 && repsMax === 10) return 9;\n  return 11;\n}\nfunction pctDescarga(nivel, esMono) {\n  if (nivel === 'P2' && !esMono) return 0.95;\n  if (['I1', 'I2'].includes(nivel)) return 0.975;\n  return 0.90;\n}\nfunction pctSubida(nivel) {\n  if (nivel === 'I2') return 1.025;\n  return 1.05;\n}\nfunction evaluarFallos(hist, repsMin, repsMax, nivel, esMono) {\n  const datos = parseHistDos(hist).slice(0, 2);\n  if (datos.length < 2) return false;\n  const threshold = (repsMin <= 8 && repsMax <= 10 && nivel === 'P2' && !esMono) ? 9 : (repsMax >= 15 ? 13.5 : 11);\n  return datos.every(x => Number(x.reps_promedio) <= threshold);\n}\nfunction progresionBase(ejercicio, slot, ref, semana, rirMin, rirMax) {\n  const tipo = canonTipo(slot.tipo_slot_original || slot.tipo_slot);\n  const esAerobico = tipo === 'AEROBICO';\n  const esIso = limpiar(ejercicio.patron_movimiento).includes('ISOMETR') || limpiar(ejercicio.nombre).includes('ISOMETR');\n  const esBanda = limpiar(ejercicio.equipo_necesario).includes('BANDA') || limpiar(ejercicio.accesorio).includes('BANDA');\n  const esMono = esMonoarticular(ejercicio) || tipo === 'TERCIARIO' || tipo === 'DEBILIDAD';\n  const esMulti = !esMono;\n\n  if (esAerobico) {\n    return {\n      series: 0,\n      reps_min: 0,\n      reps_max: 0,\n      peso: 0,\n      tempo: 'CONTINUO',\n      descanso: 0,\n      duracion: 10,\n      estado: 'aerobico_10_min',\n      comentario: nivelMetodo === 'P1' ? 'Aerobico suave 10 minutos' : 'Aerobico media intensidad 10 minutos'\n    };\n  }\n\n  if (esIso) {\n    const baseSeg = Number(ref?.duracion_objetivo_min_origen || 0) > 0 ? Number(ref.duracion_objetivo_min_origen) * 60 : 20;\n    const realizado = Number(ref?.duracion_realizada_min || 0) * 60;\n    const cumple = realizado >= baseSeg;\n    const siguienteSeg = cumple ? clamp(baseSeg + 5, 15, 60) : clamp(baseSeg - 5, 15, 60);\n    const series = cumple ? clamp(Number(ref?.series_origen || 3), 3, 4) : clamp(Number(ref?.series_origen || 3) + 1, 3, 4);\n    return {\n      series,\n      reps_min: siguienteSeg,\n      reps_max: siguienteSeg,\n      peso: Number(ref?.peso_referencia || 0),\n      tempo: 'ISOMETRICO',\n      descanso: descansoPorRir(rirMin, rirMax, esMulti, false),\n      duracion: Math.round(siguienteSeg / 60),\n      estado: cumple ? 'isometrico_sube_5s' : 'isometrico_baja_5s_o_sube_series',\n      comentario: 'Escala isometrica provisional: 15-20-25-30-35-40-45-50-55-60 segundos; pendiente validacion metodologica'\n    };\n  }\n\n  const inicial = rangoInicial(nivelMetodo, esMono);\n  let repsMin = Number(ref?.reps_min_origen || inicial[0]);\n  let repsMax = Number(ref?.reps_max_origen || inicial[1]);\n  let series = clamp(Number(ref?.series_origen || ref?.series_ultima || 3), 3, 4);\n  let peso = Number(ref?.peso_referencia || 0);\n  const promedio = Number(ref?.reps_promedio_ultima || 0);\n  const dosFallos = evaluarFallos(ref?.ultimas_dos_semanas, repsMin, repsMax, nivelMetodo, esMono);\n  let estado = 'sin_historial_mantener_rango';\n  let comentario = 'Microciclo pendiente de ejecucion; se recalcula con los ultimos logs por isosemana lunes-domingo';\n\n  if (promedio > 0) {\n    const esP2MultiBajo = nivelMetodo === 'P2' && !esMono && repsMin === 8 && repsMax === 10;\n    const esRangoBajo = (esP2MultiBajo || (repsMin === 10 && repsMax === 12));\n    const esRangoAlto = repsMin === 12 && repsMax === 15 || (nivelMetodo === 'P2' && !esMono && repsMin === 10 && repsMax === 12);\n\n    if (esRangoBajo) {\n      const threshold = umbralBajo(nivelMetodo, esMono, repsMin, repsMax);\n      if (promedio >= threshold) {\n        if (nivelMetodo === 'P2' && !esMono) [repsMin, repsMax] = [10, 12]; else [repsMin, repsMax] = [12, 15];\n        estado = 'sube_rango_repeticiones';\n      } else if (dosFallos) {\n        peso = peso > 0 ? peso * pctDescarga(nivelMetodo, esMono) : 0;\n        estado = 'descarga_por_dos_fallos';\n      } else {\n        estado = 'mantener_por_primer_fallo';\n      }\n    } else if (esRangoAlto) {\n      const threshold = (repsMax === 15) ? 13.5 : 11;\n      if (promedio > threshold) {\n        if (series < 4) {\n          series += 1;\n          estado = 'sube_serie';\n        } else {\n          peso = peso > 0 ? peso * pctSubida(nivelMetodo) : 0;\n          [repsMin, repsMax] = (nivelMetodo === 'P2' && !esMono) ? [8, 10] : [10, 12];\n          estado = 'sube_carga_y_reinicia_rango';\n        }\n      } else if (dosFallos) {\n        if (series < 4) {\n          series += 1;\n          [repsMin, repsMax] = (nivelMetodo === 'P2' && !esMono) ? [8, 10] : [10, 12];\n          estado = 'sube_serie_y_reinicia_rango_por_dos_fallos';\n        } else {\n          peso = peso > 0 ? peso * pctDescarga(nivelMetodo, esMono) : 0;\n          [repsMin, repsMax] = (nivelMetodo === 'P2' && !esMono) ? [8, 10] : [10, 12];\n          estado = 'descarga_y_reinicia_rango_por_dos_fallos';\n        }\n      } else {\n        estado = 'mantener_rango_alto_por_primer_fallo';\n      }\n    }\n    comentario = `Ultima isosemana: promedio reps ${promedio.toFixed(1)}; estado ${estado}`;\n  }\n\n  if (esBanda) {\n    comentario += ' | Bandas: progresion por color pendiente de tabla oficial; por ahora mantener color y subir al superar rango objetivo dos semanas seguidas';\n  }\n\n  return {\n    series,\n    reps_min: repsMin,\n    reps_max: repsMax,\n    peso,\n    tempo: '1-1-2',\n    descanso: descansoPorRir(rirMin, rirMax, esMulti, false),\n    duracion: null,\n    estado,\n    comentario\n  };\n}\n\nconst salida = [];\nconst seleccionBase = [];\nconst usadosMicrociclo = new Set();\n\nfor (const dia of plan.dias_planificados) {\n  const usadosDia = new Set();\n  let ordenSalidaDia = 1;\n  const slotsDia = [...dia].sort((a, b) => Number(a.orden || 0) - Number(b.orden || 0));\n\n  for (const slot of slotsDia) {\n    const elegido = elegirEjercicio(slot, usadosDia, usadosMicrociclo);\n    if (!elegido) continue;\n\n    const ejercicio = elegido.ej;\n    usadosDia.add(ejercicio.id_ejercicio);\n    usadosMicrociclo.add(ejercicio.id_ejercicio);\n\n    const fallback = fallbackPatron(ejercicio, slot) || !coincideMaquina(ejercicio, slot) || !coincideTipo(ejercicio, slot);\n    const motivosFallback = [\n      fallbackPatron(ejercicio, slot) ? 'AGARRE resuelto con TRACCION' : null,\n      !coincideMaquina(ejercicio, slot) ? `maquina requerida ${slot.maquina_slot || 'sin restriccion'} no exacta` : null,\n      !coincideTipo(ejercicio, slot) ? `tipo requerido ${slot.tipo_slot_original || slot.tipo_slot} no exacto` : null,\n      !compatibleZona(ejercicio, slot) ? 'zona/tren no compatible' : null,\n      slot.fallback_plan ? slot.fallback_plan : null\n    ].filter(Boolean).join('; ');\n\n    seleccionBase.push({\n      slot,\n      ejercicio,\n      orden_ejercicio: ordenSalidaDia++,\n      fallback,\n      motivosFallback\n    });\n  }\n}\n\nfor (let semana = 1; semana <= datosRIR.semanas_totales; semana++) {\n  for (const item of seleccionBase) {\n    const { slot, ejercicio, fallback, motivosFallback } = item;\n    const ref = referencias.get(String(ejercicio.id_ejercicio)) || null;\n    const rirMin = datosRIR.rir_semanal_min?.[semana - 1] ?? datosRIR.rir_semanal?.[semana - 1] ?? 4;\n    const rirMax = datosRIR.rir_semanal_max?.[semana - 1] ?? datosRIR.rir_semanal?.[semana - 1] ?? rirMin;\n    const progresion = progresionBase(ejercicio, slot, ref, semana, rirMin, rirMax);\n    const tecnicaAvanzada = datosRIR.tecnicas_avanzadas_habilitadas && semana >= 3 && !['primario', 'aerobico'].includes(slot.tipo_slot) && !ejercicio.es_axial ? 'permitida' : null;\n\n    salida.push({ json: {\n      id_ejercicio: ejercicio.id_ejercicio,\n      semana,\n      dia_numero: slot.dia_numero,\n      dia_tipo: slot.dia_tipo,\n      orden_ejercicio: item.orden_ejercicio,\n      orden_matriz: slot.orden,\n      tipo_slot: slot.tipo_slot,\n      zona: slot.zona,\n      objetivo_muscular: slot.objetivo_muscular || slot.musculo_slot || null,\n      patron_slot: slot.patron_slot || null,\n      maquina_slot: slot.maquina_slot || null,\n      tipo_slot_original: slot.tipo_slot_original || null,\n      fuente_matriz: slot.fuente_matriz || plan.rutina_tipo,\n      rir_objetivo: rirMax,\n      rir_objetivo_min: rirMin,\n      rir_objetivo_max: rirMax,\n      peso_sugerido: round2(progresion.peso),\n      series: progresion.series,\n      reps_min: progresion.reps_min,\n      reps_max: progresion.reps_max,\n      tempo: progresion.tempo,\n      descanso_seg: progresion.descanso,\n      duracion_objetivo_min: progresion.duracion,\n      estado_microciclo: progresion.estado,\n      tecnica_avanzada: tecnicaAvanzada,\n      fallback_aplicado: fallback,\n      motivo_fallback: motivosFallback || null,\n      comentario: [\n        `Semana ${semana} - Dia ${slot.dia_numero} - ${slot.dia_tipo}`,\n        `Matriz: ${slot.fuente_matriz || plan.rutina_tipo}`,\n        `Orden matriz: ${slot.orden}`,\n        `Slot: ${slot.tipo_slot}`,\n        slot.patron_slot ? `Patron: ${slot.patron_slot}` : null,\n        slot.maquina_slot ? `Maquina: ${slot.maquina_slot}` : null,\n        slot.musculo_slot ? `Musculo: ${slot.musculo_slot}` : null,\n        `RIR objetivo ${rirMin}-${rirMax}`,\n        `Iteracion microciclo: ${progresion.comentario}`,\n        `Base mesociclo estable; ejercicio unico dentro del microciclo; mesociclo metodo ${mesoMetodo}`,\n        slot.fallback_plan ? `Fallback planificado: ${slot.fallback_plan}` : null,\n        fallback ? `Fallback: ${motivosFallback}` : null,\n        tecnicaAvanzada ? 'Tecnica avanzada permitida en accesorio estable' : null\n      ].filter(Boolean).join(' | ')\n    }});\n  }\n}\n\nreturn salida.sort((a, b) => {\n  if (a.json.semana !== b.json.semana) return a.json.semana - b.json.semana;\n  if (a.json.dia_numero !== b.json.dia_numero) return a.json.dia_numero - b.json.dia_numero;\n  return a.json.orden_ejercicio - b.json.orden_ejercicio;\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3136,
+        -96
+      ],
+      "id": "07071ef4-f09a-4656-a3b7-a9e5faf52e8b",
+      "name": "Re-Agrupador"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO adt.evaluaciones_sesion (\n    id_alumno, \n    fecha\n) VALUES (\n  {{ $('Obtención de Contexto del Alumno').item.json.id_alumno }},  \n  CURRENT_DATE\n) RETURNING id_sesion;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3344,
+        -208
+      ],
+      "id": "dd618228-50ad-4b38-9e95-130d3ad28e42",
+      "name": "Crear Cabecera de Sesión",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO adt.bloques_ejercicios (\n    id_mesociclo,\n    id_ejercicio,\n    semana_meso,\n    dia_numero,\n    dia_tipo,\n    orden,\n    orden_matriz,\n    tipo_slot,\n    zona,\n    objetivo_muscular,\n    patron_slot,\n    maquina_slot,\n    tipo_slot_original,\n    fuente_matriz,\n    series,\n    reps_min,\n    reps_max,\n    rir_objetivo,\n    rir_objetivo_min,\n    rir_objetivo_max,\n    peso_sugerido_inicial,\n    tempo,\n    descanso_seg,\n    duracion_objetivo_min,\n    estado_microciclo,\n    tecnica_avanzada,\n    fallback_aplicado,\n    motivo_fallback,\n    comentario_semanal\n) VALUES (\n    {{ $(\"Insertar Mesociclo Actual\").first().json.id_mesociclo }},\n    {{ $json.id_ejercicio }},\n    {{ $json.semana }},\n    {{ $json.dia_numero }},\n    '{{ $json.dia_tipo }}',\n    {{ $json.orden_ejercicio }},\n    {{ $json.orden_matriz || 'NULL' }},\n    '{{ $json.tipo_slot }}',\n    '{{ $json.zona }}',\n    {{ $json.objetivo_muscular ? \"'\" + $json.objetivo_muscular.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n    {{ $json.patron_slot ? \"'\" + $json.patron_slot.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n    {{ $json.maquina_slot ? \"'\" + $json.maquina_slot.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n    {{ $json.tipo_slot_original ? \"'\" + $json.tipo_slot_original.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n    {{ $json.fuente_matriz ? \"'\" + $json.fuente_matriz.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n    {{ $json.series }},\n    {{ $json.reps_min }},\n    {{ $json.reps_max }},\n    {{ $json.rir_objetivo }},\n    {{ $json.rir_objetivo_min }},\n    {{ $json.rir_objetivo_max }},\n    {{ $json.peso_sugerido }},\n    '{{ $json.tempo }}',\n    {{ $json.descanso_seg }},\n    {{ $json.duracion_objetivo_min ?? 'NULL' }},\n    {{ $json.estado_microciclo ? \"'\" + $json.estado_microciclo.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n    {{ $json.tecnica_avanzada ? \"'\" + $json.tecnica_avanzada.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n    {{ $json.fallback_aplicado ? 'TRUE' : 'FALSE' }},\n    {{ $json.motivo_fallback ? \"'\" + $json.motivo_fallback.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n    '{{ $json.comentario.replace(/'/g, \"''\") }}'\n)\nON CONFLICT (id_mesociclo, semana_meso, dia_numero, orden)\nDO UPDATE SET\n    id_ejercicio = EXCLUDED.id_ejercicio,\n    dia_tipo = EXCLUDED.dia_tipo,\n    orden_matriz = EXCLUDED.orden_matriz,\n    tipo_slot = EXCLUDED.tipo_slot,\n    zona = EXCLUDED.zona,\n    objetivo_muscular = EXCLUDED.objetivo_muscular,\n    patron_slot = EXCLUDED.patron_slot,\n    maquina_slot = EXCLUDED.maquina_slot,\n    tipo_slot_original = EXCLUDED.tipo_slot_original,\n    fuente_matriz = EXCLUDED.fuente_matriz,\n    series = EXCLUDED.series,\n    reps_min = EXCLUDED.reps_min,\n    reps_max = EXCLUDED.reps_max,\n    rir_objetivo = EXCLUDED.rir_objetivo,\n    rir_objetivo_min = EXCLUDED.rir_objetivo_min,\n    rir_objetivo_max = EXCLUDED.rir_objetivo_max,\n    peso_sugerido_inicial = EXCLUDED.peso_sugerido_inicial,\n    tempo = EXCLUDED.tempo,\n    descanso_seg = EXCLUDED.descanso_seg,\n    duracion_objetivo_min = EXCLUDED.duracion_objetivo_min,\n    estado_microciclo = EXCLUDED.estado_microciclo,\n    tecnica_avanzada = EXCLUDED.tecnica_avanzada,\n    fallback_aplicado = EXCLUDED.fallback_aplicado,\n    motivo_fallback = EXCLUDED.motivo_fallback,\n    comentario_semanal = EXCLUDED.comentario_semanal,\n    actualizado_en = CURRENT_TIMESTAMP\nWHERE NOT EXISTS (\n    SELECT 1\n    FROM adt.log_entrenamiento l\n    WHERE l.id_bloque = adt.bloques_ejercicios.id_bloque\n)\nRETURNING id_bloque, id_mesociclo, semana_meso, dia_numero, orden;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3344,
+        -96
+      ],
+      "id": "2139a93c-4e70-4d0e-911c-dfcbde3c292f",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "routines_automation",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -32,
+        48
+      ],
+      "id": "0682be12-a7d0-403e-83dc-bb045f6e9cf8",
+      "name": "Webhook",
+      "webhookId": "a3dd65db-b14e-49cb-889d-846a7ca2fc01"
+    },
+    {
+      "parameters": {
+        "jsCode": "// CONTRATO WEBHOOK APPSMITH - Algoritmo de Rutina v3.6 microciclos iterativos\n// Metodo: POST\n// Path: /webhook/routines_automation\n// Content-Type: application/json\n// Acepta objeto, array, string JSON u objeto dentro de body.\n//\n// Payload recomendado:\n// {\n//   \"id_alumno\": 260,\n//   \"objetivo\": \"recomposicion_corporal\",\n//   \"prioridad_recomposicion\": \"musculatura\",\n//   \"enfoque_principal\": \"full_body\",\n//   \"enfoque_especifico\": \"gluteo\",\n//   \"debilidad\": null\n// }\n//\n// enfoque_principal permitido:\n// full_body, torso, pierna, pierna_torso, torso_pierna,\n// fullbody_torso_pierna, torso_pierna_torso, pierna_torso_pierna,\n// pierna_torso_pierna_torso, torso_torso_pierna_torso.\n//\n// enfoque_especifico permitido:\n// null, gluteo, abdomen, manguito_rotador, espalda, hombro, pectoral,\n// brazos, cuadriceps, isquio, gastrocnemio.\n//\n// debilidad permitida: null, gluteo, abdomen, manguito_rotador.\n//\n// Iteracion microciclos:\n// - El workflow reutiliza el mesociclo activo si existe.\n// - Los bloques se actualizan por clave (id_mesociclo, semana_meso, dia_numero, orden).\n// - Un bloque con log_entrenamiento asociado no se sobreescribe.\n// - RIR se guarda como rir_objetivo, rir_objetivo_min y rir_objetivo_max.\n// - Aerobico guarda duracion_objetivo_min = 10.\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        240
+      ],
+      "id": "contrato-webhook-appsmith-mayo-v2",
+      "name": "Contrato Webhook Appsmith",
+      "disabled": true,
+      "notes": "Documentacion del payload esperado desde Appsmith. No conectar al flujo."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH previo AS (\n    SELECT DISTINCT be.id_ejercicio\n    FROM adt.bloques_ejercicios be\n    JOIN adt.mesociclos m ON be.id_mesociclo = m.id_mesociclo\n    WHERE m.id_macrociclo = {{ $(\"Code in JavaScript\").first().json.id_macrociclo }}\n      AND m.numero_meso_en_macro = {{ Math.max(1, Number($(\"Insertar Mesociclo Actual\").first().json.numero_meso_en_macro || $(\"Code in JavaScript\").first().json.numero_meso || 1) - 1) }}\n      AND {{ Number($(\"Insertar Mesociclo Actual\").first().json.numero_meso_en_macro || $(\"Code in JavaScript\").first().json.numero_meso || 1) }} > 1\n)\nSELECT id_ejercicio FROM previo\nUNION ALL\nSELECT NULL::int AS id_ejercicio WHERE NOT EXISTS (SELECT 1 FROM previo);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3040,
+        -96
+      ],
+      "id": "ejercicios-mesociclo-previo-v34",
+      "name": "Ejercicios Mesociclo Previo",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "When clicking ‘Execute workflow’": [
+      {
+        "json": {
+          "id_alumno": 1,
+          "objetivo": "RC",
+          "prioridad_recomposicion": "musculatura",
+          "enfoque_principal": "fullbody_torso_pierna",
+          "enfoque_especifico": "gluteo",
+          "debilidad": "abdomen"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Entrada Rutina",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Entrada Rutina": {
+      "main": [
+        [
+          {
+            "node": "Obtención de Contexto del Alumno",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtención de Contexto del Alumno": {
+      "main": [
+        [
+          {
+            "node": "IF de validación de evaluación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF de validación de evaluación": {
+      "main": [
+        [
+          {
+            "node": "Obtener o Crear Macrociclo Activo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener o Crear Macrociclo Activo": {
+      "main": [
+        [
+          {
+            "node": "Unificador de Macrociclo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unificador de Macrociclo": {
+      "main": [
+        [
+          {
+            "node": "Contar Mesociclos del Macrociclo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contar Mesociclos del Macrociclo": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Insertar Mesociclo Actual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insertar Mesociclo Actual": {
+      "main": [
+        [
+          {
+            "node": "Preparador de Filtros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparador de Filtros": {
+      "main": [
+        [
+          {
+            "node": "Seleccionar Biblioteca de Ejercicios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seleccionar Biblioteca de Ejercicios": {
+      "main": [
+        [
+          {
+            "node": "Definidor de Estructura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definidor de Estructura": {
+      "main": [
+        [
+          {
+            "node": "Selección Técnica",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Selección Técnica": {
+      "main": [
+        [
+          {
+            "node": "Asignador de RIR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Asignador de RIR": {
+      "main": [
+        [
+          {
+            "node": "Obtener Referencia de Carga",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener Referencia de Carga": {
+      "main": [
+        [
+          {
+            "node": "Ejercicios Mesociclo Previo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Agrupador": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Crear Cabecera de Sesión",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        []
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Entrada Rutina",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ejercicios Mesociclo Previo": {
+      "main": [
+        [
+          {
+            "node": "Re-Agrupador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "algoritmo-rutina-matriz-excel-v3-4-mesociclos-activo",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a212b7d49b98dc0cbb349ea46a8c5f2f03b9f67fb9905ba8a3c0bc1f37bfbf72"
+  },
+  "id": "AlgoritmoRutinaMatrizExcelV34MesociclosActivoLocal",
+  "tags": []
+}

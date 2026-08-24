@@ -1,0 +1,1184 @@
+{
+  "name": "Drive a PSQL - RESET TOTAL ADT v3.6 microciclos",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- ==========================================\n-- RESET TOTAL ADT - v3.6 microciclos iterativos\n-- ==========================================\n-- Este script borra y recrea el esquema completo usado por el workflow\n-- Algoritmo de Rutina_matriz_v3_6_microciclos_iterativos.json.\n-- No ejecutar en produccion sin respaldo previo.\n\nCREATE SCHEMA IF NOT EXISTS adt;\n\nDROP TABLE IF EXISTS adt.log_entrenamiento CASCADE;\nDROP TABLE IF EXISTS adt.evaluaciones_movimiento CASCADE;\nDROP TABLE IF EXISTS adt.evaluaciones_sesion CASCADE;\nDROP TABLE IF EXISTS adt.microciclos_control CASCADE;\nDROP TABLE IF EXISTS adt.bloques_ejercicios CASCADE;\nDROP TABLE IF EXISTS adt.mesociclos CASCADE;\nDROP TABLE IF EXISTS adt.rutinas_maestras CASCADE;\nDROP TABLE IF EXISTS adt.macrociclos CASCADE;\nDROP TABLE IF EXISTS adt.alumno_problemas CASCADE;\nDROP TABLE IF EXISTS adt.problemas_restricciones CASCADE;\nDROP TABLE IF EXISTS adt.ejercicios CASCADE;\nDROP TABLE IF EXISTS adt.alumnos CASCADE;\nDROP TABLE IF EXISTS adt.metodologia_rir CASCADE;\nDROP TABLE IF EXISTS adt.metodologia_niveles CASCADE;\n\n-- ==========================================\n-- MODULO 0: TABLAS MAESTRAS DE METODOLOGIA\n-- ==========================================\n\nCREATE TABLE adt.metodologia_niveles (\n    codigo_nivel VARCHAR(5) PRIMARY KEY,\n    descripcion TEXT,\n    riesgo_aceptable VARCHAR(50),\n    enfoque_principal VARCHAR(100),\n    orden_nivel INTEGER NOT NULL DEFAULT 0\n);\n\nINSERT INTO adt.metodologia_niveles\n    (codigo_nivel, descripcion, riesgo_aceptable, enfoque_principal, orden_nivel)\nVALUES\n    ('P1', 'Principiante - Fase Adaptacion', 'Minimo', 'Aprendizaje patron y control motor', 1),\n    ('P2', 'Principiante - Consolidacion', 'Bajo', 'Incremento de carga tecnica', 2),\n    ('I1', 'Intermedio 1', 'Medio', 'Tension mecanica progresiva', 3),\n    ('I2', 'Intermedio 2', 'Alto', 'Tension mecanica y tecnicas avanzadas controladas', 4),\n    ('P3', 'Alias legado de I1', 'Medio', 'Compatibilidad historica', 3),\n    ('', 'Sin Dato', 'Sin Dato', 'Sin Dato', 0);\n\nCREATE TABLE adt.metodologia_rir (\n    id_regla SERIAL PRIMARY KEY,\n    codigo_nivel VARCHAR(5) REFERENCES adt.metodologia_niveles(codigo_nivel),\n    semana_mesociclo INTEGER,\n    rir_objetivo_min INTEGER,\n    rir_objetivo_max INTEGER,\n    rpe_objetivo_sugerido INTEGER\n);\n\nINSERT INTO adt.metodologia_rir\n    (codigo_nivel, semana_mesociclo, rir_objetivo_min, rir_objetivo_max, rpe_objetivo_sugerido)\nVALUES\n    ('P1', 1, 4, 5, 6), ('P1', 2, 4, 5, 6), ('P1', 3, 4, 5, 6),\n    ('P1', 4, 4, 5, 6), ('P1', 5, 4, 5, 6), ('P1', 6, 4, 5, 6),\n    ('P2', 1, 3, 4, 7), ('P2', 2, 3, 4, 7), ('P2', 3, 3, 4, 7),\n    ('P2', 4, 3, 4, 7), ('P2', 5, 3, 4, 7), ('P2', 6, 3, 4, 7),\n    ('I1', 1, 4, 4, 6), ('I1', 2, 3, 3, 7), ('I1', 3, 3, 3, 7),\n    ('I1', 4, 2, 2, 8), ('I1', 5, 1, 1, 9), ('I1', 6, 0, 0, 10),\n    ('I2', 1, 4, 4, 6), ('I2', 2, 3, 3, 7), ('I2', 3, 3, 3, 7),\n    ('I2', 4, 2, 2, 8), ('I2', 5, 1, 1, 9), ('I2', 6, 0, 0, 10),\n    ('P3', 1, 4, 4, 6), ('P3', 2, 3, 3, 7), ('P3', 3, 3, 3, 7),\n    ('P3', 4, 2, 2, 8), ('P3', 5, 1, 1, 9), ('P3', 6, 0, 0, 10);\n\n-- ==========================================\n-- MODULO 1: ALUMNOS Y SALUD\n-- ==========================================\n\nCREATE TABLE adt.alumnos (\n    id_alumno SERIAL PRIMARY KEY,\n    nombre_completo VARCHAR(255) NOT NULL,\n    rut VARCHAR(20) UNIQUE,\n    fecha_nacimiento DATE,\n    genero VARCHAR(50),\n    frecuencia_semanal INTEGER,\n    nivel_experiencia VARCHAR(5) REFERENCES adt.metodologia_niveles(codigo_nivel) DEFAULT 'P1',\n    objetivo_id INTEGER,\n    objetivo VARCHAR(100),\n    enfoque_principal VARCHAR(100),\n    enfoque_especifico VARCHAR(100),\n    debilidad VARCHAR(100),\n    prioridad_recomposicion VARCHAR(100),\n    fecha_ingreso DATE DEFAULT CURRENT_DATE,\n    estado_activo BOOLEAN DEFAULT TRUE,\n    evaluacion_inicial BOOLEAN DEFAULT FALSE,\n    plan VARCHAR(255),\n    observaciones TEXT\n);\n\nCREATE TABLE adt.problemas_restricciones (\n    id_problema VARCHAR(50) PRIMARY KEY,\n    nombre_problema VARCHAR(255) NOT NULL,\n    tipo_impacto TEXT,\n    patron_a_evitar VARCHAR(255),\n    articulacion_afectada TEXT,\n    instruccion_automatica TEXT,\n    comentario TEXT\n);\n\nCREATE TABLE adt.alumno_problemas (\n    id_relacion SERIAL PRIMARY KEY,\n    id_alumno INTEGER REFERENCES adt.alumnos(id_alumno) ON DELETE CASCADE,\n    id_problema VARCHAR(50) REFERENCES adt.problemas_restricciones(id_problema),\n    fecha_deteccion DATE DEFAULT CURRENT_DATE,\n    esta_activo BOOLEAN DEFAULT TRUE\n);\n\n-- ==========================================\n-- MODULO 2: BIBLIOTECA TECNICA\n-- ==========================================\n\nCREATE TABLE adt.ejercicios (\n    id_ejercicio SERIAL PRIMARY KEY,\n    nombre VARCHAR(255) NOT NULL,\n    multi_mono VARCHAR(50),\n    patron_movimiento VARCHAR(100),\n    tren VARCHAR(50),\n    contraccion VARCHAR(100),\n    articulacion VARCHAR(100),\n    grupo_muscular_primario VARCHAR(100),\n    grupo_muscular_secundario VARCHAR(100),\n    grupo_muscular_terciario VARCHAR(100),\n    maquina VARCHAR(100),\n    equipo_necesario VARCHAR(100),\n    accesorio VARCHAR(100),\n    unilateral_bilateral VARCHAR(50),\n    dificultad VARCHAR(50),\n    lvl_min_requerido VARCHAR(50),\n    es_axial BOOLEAN DEFAULT FALSE,\n    nivel_minimo_requerido VARCHAR(5) REFERENCES adt.metodologia_niveles(codigo_nivel) DEFAULT 'P1',\n    es_primario BOOLEAN DEFAULT FALSE,\n    es_secundario BOOLEAN DEFAULT FALSE,\n    es_terciario BOOLEAN DEFAULT FALSE,\n    activo BOOLEAN DEFAULT TRUE\n);\n\n-- ==========================================\n-- MODULO 3: PROGRAMACION TEMPORAL\n-- ==========================================\n\nCREATE TABLE adt.macrociclos (\n    id_macrociclo SERIAL PRIMARY KEY,\n    id_alumno INTEGER REFERENCES adt.alumnos(id_alumno) ON DELETE CASCADE,\n    nombre_macro VARCHAR(255) DEFAULT 'Ciclo General de Progreso',\n    fecha_inicio DATE DEFAULT CURRENT_DATE,\n    fecha_fin_estimada DATE,\n    objetivo_global VARCHAR(255),\n    esta_activo BOOLEAN DEFAULT TRUE\n);\n\nCREATE TABLE adt.rutinas_maestras (\n    id_rutina SERIAL PRIMARY KEY,\n    id_macrociclo INTEGER REFERENCES adt.macrociclos(id_macrociclo) ON DELETE CASCADE,\n    id_alumno INTEGER REFERENCES adt.alumnos(id_alumno) ON DELETE CASCADE,\n    nombre_plan VARCHAR(255),\n    fecha_inicio DATE DEFAULT CURRENT_DATE,\n    fecha_fin_estimada DATE,\n    dias_semanales INTEGER DEFAULT 3,\n    objetivo_fase VARCHAR(100),\n    esta_activa BOOLEAN DEFAULT TRUE\n);\n\nCREATE TABLE adt.mesociclos (\n    id_mesociclo SERIAL PRIMARY KEY,\n    id_macrociclo INTEGER REFERENCES adt.macrociclos(id_macrociclo) ON DELETE CASCADE,\n    numero_meso_en_macro INTEGER,\n    fase_tipo VARCHAR(50),\n    fecha_inicio DATE DEFAULT CURRENT_DATE,\n    fecha_fin_estimada DATE,\n    semanas_totales INTEGER DEFAULT 6,\n    esta_activo BOOLEAN DEFAULT TRUE\n);\n\nCREATE TABLE adt.bloques_ejercicios (\n    id_bloque SERIAL PRIMARY KEY,\n    id_mesociclo INTEGER REFERENCES adt.mesociclos(id_mesociclo) ON DELETE CASCADE,\n    id_ejercicio INTEGER REFERENCES adt.ejercicios(id_ejercicio),\n    semana_meso INTEGER NOT NULL DEFAULT 1,\n    dia_numero INTEGER NOT NULL,\n    dia_tipo VARCHAR(50),\n    orden INTEGER NOT NULL,\n    orden_matriz INTEGER,\n    tipo_slot VARCHAR(50),\n    zona VARCHAR(50),\n    objetivo_muscular VARCHAR(100),\n    patron_slot VARCHAR(100),\n    maquina_slot VARCHAR(50),\n    tipo_slot_original VARCHAR(100),\n    fuente_matriz VARCHAR(100),\n    series INTEGER DEFAULT 3,\n    reps_min INTEGER,\n    reps_max INTEGER,\n    rir_objetivo INTEGER,\n    rir_objetivo_min INTEGER,\n    rir_objetivo_max INTEGER,\n    peso_sugerido_inicial DECIMAL(8,2),\n    tempo VARCHAR(20) DEFAULT '1-1-2',\n    descanso_seg INTEGER DEFAULT 90,\n    duracion_objetivo_min INTEGER,\n    estado_microciclo VARCHAR(100),\n    tecnica_avanzada VARCHAR(100),\n    fallback_aplicado BOOLEAN DEFAULT FALSE,\n    motivo_fallback TEXT,\n    comentario_semanal TEXT,\n    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    CONSTRAINT bloques_ejercicios_slot_unico UNIQUE\n        (id_mesociclo, semana_meso, dia_numero, orden)\n);\n\nCREATE TABLE adt.microciclos_control (\n    id_microciclo SERIAL PRIMARY KEY,\n    id_mesociclo INTEGER REFERENCES adt.mesociclos(id_mesociclo) ON DELETE CASCADE,\n    semana_meso INTEGER NOT NULL,\n    fecha_inicio_iso DATE NOT NULL,\n    fecha_fin_iso DATE NOT NULL,\n    entrenamientos_esperados INTEGER DEFAULT 0,\n    entrenamientos_completados INTEGER DEFAULT 0,\n    estado VARCHAR(50) DEFAULT 'pendiente',\n    fecha_ultima_evaluacion TIMESTAMP,\n    requiere_recalculo BOOLEAN DEFAULT FALSE,\n    comentario TEXT,\n    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    CONSTRAINT microciclos_control_unico UNIQUE (id_mesociclo, semana_meso)\n);\n\n-- ==========================================\n-- MODULO 4: EVALUACION Y SEGUIMIENTO\n-- ==========================================\n\nCREATE TABLE adt.evaluaciones_sesion (\n    id_sesion SERIAL PRIMARY KEY,\n    id_alumno INTEGER REFERENCES adt.alumnos(id_alumno) ON DELETE CASCADE,\n    fecha DATE DEFAULT CURRENT_DATE\n);\n\nCREATE TABLE adt.evaluaciones_movimiento (\n    id_mov_eval SERIAL PRIMARY KEY,\n    id_sesion INTEGER REFERENCES adt.evaluaciones_sesion(id_sesion) ON DELETE CASCADE,\n    id_ejercicio INTEGER REFERENCES adt.ejercicios(id_ejercicio),\n    punto_evaluado VARCHAR(255),\n    peso_manejado DECIMAL(8,2),\n    reps_logradas INTEGER,\n    rpe_observado INTEGER,\n    tecnica_calificacion INTEGER\n);\n\nCREATE TABLE adt.log_entrenamiento (\n    id_log SERIAL PRIMARY KEY,\n    id_bloque INTEGER REFERENCES adt.bloques_ejercicios(id_bloque) ON DELETE CASCADE,\n    semana_del_meso INTEGER,\n    fecha_realizada TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n    iso_year INTEGER,\n    iso_semana INTEGER,\n    serie_numero INTEGER,\n    series_realizadas INTEGER,\n    peso_utilizado DECIMAL(8,2),\n    reps_logradas INTEGER,\n    reps_promedio DECIMAL(6,2),\n    duracion_realizada_min INTEGER,\n    rir_reportado INTEGER,\n    rpe_reportado INTEGER,\n    comentario_alumno TEXT\n);\n\nCREATE INDEX idx_alumnos_estado ON adt.alumnos (estado_activo);\nCREATE INDEX idx_macrociclos_alumno_activo ON adt.macrociclos (id_alumno, esta_activo);\nCREATE INDEX idx_mesociclos_macro_activo ON adt.mesociclos (id_macrociclo, esta_activo);\nCREATE INDEX idx_bloques_mesociclo_semana ON adt.bloques_ejercicios (id_mesociclo, semana_meso);\nCREATE INDEX idx_bloques_ejercicio ON adt.bloques_ejercicios (id_ejercicio);\nCREATE INDEX idx_log_bloque_fecha ON adt.log_entrenamiento (id_bloque, fecha_realizada DESC);\nCREATE INDEX idx_microciclos_control_estado ON adt.microciclos_control (estado, requiere_recalculo);\nCREATE INDEX idx_microciclos_control_mesociclo ON adt.microciclos_control (id_mesociclo, semana_meso);\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -32,
+        224
+      ],
+      "id": "4cac01b5-e890-4fbd-b8e0-a6fb6772c788",
+      "name": "RESET TOTAL ADT",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1nG0cEhbd1McZCISsp58n34iExb4OLbwOaUaFM8T39cs",
+          "mode": "list",
+          "cachedResultName": "alumnos",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1nG0cEhbd1McZCISsp58n34iExb4OLbwOaUaFM8T39cs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1nG0cEhbd1McZCISsp58n34iExb4OLbwOaUaFM8T39cs/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        176,
+        224
+      ],
+      "id": "22febcac-9a21-4772-bb76-6345d2ae5f57",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jeOVzp04anRFmyDx",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const isBlank = v => v === undefined || v === null || String(v).trim() === '';\nconst text = v => isBlank(v) ? null : String(v).trim();\nconst upper = v => {\n  const t = text(v);\n  return t ? t.toUpperCase() : null;\n};\nconst bool = v => {\n  if (isBlank(v)) return null;\n  const t = String(v).trim().toLowerCase();\n  if (['true','1','si','sí','yes','y'].includes(t)) return true;\n  if (['false','0','no','n'].includes(t)) return false;\n  return null;\n};\nconst int = v => isBlank(v) ? null : Number.parseInt(String(v).replace(/[^0-9-]/g, ''), 10);\nconst num = v => isBlank(v) ? null : Number(String(v).replace(',', '.'));\nconst date = v => {\n  const t = text(v);\n  if (!t || ['NO HAY','BUSCAR'].includes(t.toUpperCase())) return null;\n  if (/^\\d{2}\\/\\d{2}\\/\\d{4}$/.test(t)) {\n    const [d,m,y] = t.split('/');\n    return `${y}-${m}-${d}`;\n  }\n  return t;\n};\nconst nivel = v => {\n  const t = upper(v);\n  return ['P1','P2','P3','I1'].includes(t) ? t : 'P1';\n};\nconst objetivo = v => {\n  const t = upper(v);\n  if (!t) return null;\n  if (['GRASA','PERDIDA DE GRASA','PERDIDA_GRASA'].includes(t)) return 'perdida_de_grasa';\n  if (['MUSCULO','MUSCULATURA','GANANCIA MUSCULAR'].includes(t)) return 'musculatura';\n  if (['RC','RECOMPOSICION','RECOMPOSICION CORPORAL'].includes(t)) return 'recomposicion_corporal';\n  return t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');\n};\nconst yesNo = v => {\n  const t = upper(v);\n  if (!t) return false;\n  return ['SI','SÍ','TRUE','1','YES'].includes(t);\n};\nconst salida = [];\nfor (const item of $input.all()) {\n  const r = item.json;\n  if (isBlank(r.nombre_completo) && isBlank(r.RUT) && isBlank(r.rut)) continue;\n  const id = int(r.id_alumno);\n  const rut = text(r.RUT ?? r.rut);\n  // El nodo Postgres hace upsert por id_alumno; si no existe, n8n corta el nodo completo.\n  if (!id) continue;\n  const enfPrincipal = text(r.ENFOQUE ?? r.enfoque_principal);\n  salida.push({ json: {\n    id_alumno: id,\n    nombre_completo: text(r.nombre_completo),\n    rut,\n    fecha_nacimiento: date(r.fecha_nacimiento),\n    genero: text(r.genero),\n    objetivo_id: int(r.objetivo_id),\n    objetivo: objetivo(r.OBJETIVO ?? r.objetivo),\n    enfoque_principal: enfPrincipal,\n    enfoque_especifico: text(r.enfoque_especifico),\n    debilidad: text(r.debilidad),\n    prioridad_recomposicion: text(r.prioridad_recomposicion) || 'musculatura',\n    frecuencia_semanal: int(r.frecuencia_semanal),\n    nivel_experiencia: nivel(r.nivel_experiencia),\n    fecha_ingreso: date(r.fecha_ingreso),\n    estado_activo: bool(r.estado_activo) ?? true,\n    evaluacion_inicial: bool(r.evaluacion_inicial) ?? false,\n    plan: text(r.PLAN ?? r.plan),\n    observaciones: text(r.observaciones)\n  }});\n}\nreturn salida;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        224
+      ],
+      "id": "6742930f-3914-49bb-b054-872c6072342a",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -256,
+        128
+      ],
+      "id": "a8a398bf-efff-4e87-b07f-a0a7de9c0ef3",
+      "name": "Ejecución Manual"
+    },
+    {
+      "parameters": {
+        "jsCode": "const isBlank = v => v === undefined || v === null || String(v).trim() === '';\nconst text = v => isBlank(v) ? null : String(v).trim();\nconst upper = v => {\n  const t = text(v);\n  return t ? t.toUpperCase() : null;\n};\nconst bool = v => {\n  if (isBlank(v)) return null;\n  const t = String(v).trim().toLowerCase();\n  if (['true','1','si','sí','yes','y'].includes(t)) return true;\n  if (['false','0','no','n'].includes(t)) return false;\n  return null;\n};\nconst int = v => isBlank(v) ? null : Number.parseInt(String(v).replace(/[^0-9-]/g, ''), 10);\nconst num = v => isBlank(v) ? null : Number(String(v).replace(',', '.'));\nconst date = v => {\n  const t = text(v);\n  if (!t || ['NO HAY','BUSCAR'].includes(t.toUpperCase())) return null;\n  if (/^\\d{2}\\/\\d{2}\\/\\d{4}$/.test(t)) {\n    const [d,m,y] = t.split('/');\n    return `${y}-${m}-${d}`;\n  }\n  return t;\n};\nconst nivel = v => {\n  const t = upper(v);\n  return ['P1','P2','P3','I1'].includes(t) ? t : 'P1';\n};\nconst objetivo = v => {\n  const t = upper(v);\n  if (!t) return null;\n  if (['GRASA','PERDIDA DE GRASA','PERDIDA_GRASA'].includes(t)) return 'perdida_de_grasa';\n  if (['MUSCULO','MUSCULATURA','GANANCIA MUSCULAR'].includes(t)) return 'musculatura';\n  if (['RC','RECOMPOSICION','RECOMPOSICION CORPORAL'].includes(t)) return 'recomposicion_corporal';\n  return t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');\n};\nconst yesNo = v => {\n  const t = upper(v);\n  if (!t) return false;\n  return ['SI','SÍ','TRUE','1','YES'].includes(t);\n};\nconst salida = [];\nfor (const item of $input.all()) {\n  const r = item.json;\n  const id = int(r.id_ejercicio);\n  if (!id || isBlank(r.nombre)) continue;\n  const lvlCsv = text(r['LVL MIN REQUERIDO']);\n  const lvl = nivel(r.nivel_minimo_requerido || lvlCsv);\n  salida.push({ json: {\n    id_ejercicio: id,\n    nombre: text(r.nombre),\n    activo: bool(r.activo),\n    multi_mono: upper(r.multi_mono),\n    patron_movimiento: upper(r.patron_movimiento),\n    tren: upper(r.tren),\n    contraccion: upper(r.contraccion),\n    articulacion: upper(r.articulacion),\n    grupo_muscular_primario: upper(r.grupo_muscular_primario),\n    grupo_muscular_secundario: upper(r.grupo_muscular_secundario),\n    grupo_muscular_terciario: upper(r.grupo_muscular_TERCIARIO ?? r.grupo_muscular_terciario),\n    maquina: upper(r.maquina),\n    equipo_necesario: upper(r.equipo_necesario),\n    accesorio: upper(r.accesorio),\n    unilateral_bilateral: upper(r.unilateral_bilateral),\n    dificultad: upper(r.dificultad),\n    lvl_min_requerido: lvlCsv,\n    es_axial: bool(r.es_axial) ?? false,\n    nivel_minimo_requerido: lvl,\n    es_primario: yesNo(r.PRIMARIO),\n    es_secundario: yesNo(r.SECUNDARIO),\n    es_terciario: yesNo(r.TERCERIO ?? r.TERCIARIO)\n  }});\n}\nreturn salida;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1216,
+        224
+      ],
+      "id": "d90d2f35-0cac-4d53-8111-1304846aaf2e",
+      "name": "Normalizar EJERCICIOS"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1bv3joUS1lfz7V0LHGWG3SBhfiDWGj4guZRvFpSXWJ58",
+          "mode": "list",
+          "cachedResultName": "ejercicios",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1bv3joUS1lfz7V0LHGWG3SBhfiDWGj4guZRvFpSXWJ58/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1bv3joUS1lfz7V0LHGWG3SBhfiDWGj4guZRvFpSXWJ58/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1008,
+        224
+      ],
+      "id": "a99e12c4-853d-4fa1-8fd5-e1cb0f1bd90b",
+      "name": "EJERCICIOS",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jeOVzp04anRFmyDx",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { continue: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        224
+      ],
+      "id": "e73a2b64-2fb5-4bcc-afb1-54220f3d7e32",
+      "name": "Continuar a EJERCICIOS"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "value": "adt",
+          "mode": "list",
+          "cachedResultName": "adt"
+        },
+        "table": {
+          "__rl": true,
+          "value": "alumnos",
+          "mode": "list",
+          "cachedResultName": "alumnos"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "estado_activo": "={{ $json.estado_activo }}",
+            "evaluacion_inicial": "={{ $json.evaluacion_inicial }}",
+            "id_alumno": "={{ $json.id_alumno }}",
+            "objetivo_id": "={{ $json.objetivo_id }}",
+            "frecuencia_semanal": "={{ $json.frecuencia_semanal }}",
+            "nombre_completo": "={{ $json.nombre_completo }}",
+            "rut": "={{ $json.rut }}",
+            "fecha_nacimiento": "={{ $json.fecha_nacimiento }}",
+            "genero": "={{ $json.genero }}",
+            "objetivo": "={{ $json.objetivo }}",
+            "enfoque_principal": "={{ $json.enfoque_principal }}",
+            "enfoque_especifico": "={{ $json.enfoque_especifico }}",
+            "debilidad": "={{ $json.debilidad }}",
+            "prioridad_recomposicion": "={{ $json.prioridad_recomposicion }}",
+            "nivel_experiencia": "={{ $json.nivel_experiencia }}",
+            "fecha_ingreso": "={{ $json.fecha_ingreso }}",
+            "plan": "={{ $json.plan }}",
+            "observaciones": "={{ $json.observaciones }}"
+          },
+          "matchingColumns": [
+            "id_alumno"
+          ],
+          "schema": [
+            {
+              "id": "id_alumno",
+              "displayName": "id_alumno",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "nombre_completo",
+              "displayName": "nombre_completo",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "rut",
+              "displayName": "rut",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_nacimiento",
+              "displayName": "fecha_nacimiento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "genero",
+              "displayName": "genero",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "objetivo_id",
+              "displayName": "objetivo_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "objetivo",
+              "displayName": "objetivo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "enfoque_principal",
+              "displayName": "enfoque_principal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "enfoque_especifico",
+              "displayName": "enfoque_especifico",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "debilidad",
+              "displayName": "debilidad",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "prioridad_recomposicion",
+              "displayName": "prioridad_recomposicion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "frecuencia_semanal",
+              "displayName": "frecuencia_semanal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "nivel_experiencia",
+              "displayName": "nivel_experiencia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "fecha_ingreso",
+              "displayName": "fecha_ingreso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "estado_activo",
+              "displayName": "estado_activo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "evaluacion_inicial",
+              "displayName": "evaluacion_inicial",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "plan",
+              "displayName": "plan",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "observaciones",
+              "displayName": "observaciones",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        592,
+        224
+      ],
+      "id": "1f8a5996-95c4-4c7e-b882-709279761ddc",
+      "name": "Insert or update rows in a table",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "value": "adt",
+          "mode": "list",
+          "cachedResultName": "adt"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ejercicios",
+          "mode": "list",
+          "cachedResultName": "ejercicios"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "es_axial": "={{ $json.es_axial }}",
+            "es_primario": "={{ $json.es_primario }}",
+            "es_secundario": "={{ $json.es_secundario }}",
+            "es_terciario": "={{ $json.es_terciario }}",
+            "id_ejercicio": "={{ $json.id_ejercicio }}",
+            "nombre": "={{ $json.nombre }}",
+            "multi_mono": "={{ $json.multi_mono }}",
+            "patron_movimiento": "={{ $json.patron_movimiento }}",
+            "tren": "={{ $json.tren }}",
+            "contraccion": "={{ $json.contraccion }}",
+            "articulacion": "={{ $json.articulacion }}",
+            "grupo_muscular_primario": "={{ $json.grupo_muscular_primario }}",
+            "grupo_muscular_secundario": "={{ $json.grupo_muscular_secundario }}",
+            "grupo_muscular_terciario": "={{ $json.grupo_muscular_terciario }}",
+            "maquina": "={{ $json.maquina }}",
+            "equipo_necesario": "={{ $json.equipo_necesario }}",
+            "accesorio": "={{ $json.accesorio }}",
+            "unilateral_bilateral": "={{ $json.unilateral_bilateral }}",
+            "dificultad": "={{ $json.dificultad }}",
+            "lvl_min_requerido": "={{ $json.lvl_min_requerido }}",
+            "nivel_minimo_requerido": "={{ $json.nivel_minimo_requerido }}",
+            "activo": "={{ $json.activo }}"
+          },
+          "matchingColumns": [
+            "id_ejercicio"
+          ],
+          "schema": [
+            {
+              "id": "id_ejercicio",
+              "displayName": "id_ejercicio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "nombre",
+              "displayName": "nombre",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "activo",
+              "displayName": "activo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false,
+              "removed": false
+            },
+            {
+              "id": "multi_mono",
+              "displayName": "multi_mono",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "patron_movimiento",
+              "displayName": "patron_movimiento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "tren",
+              "displayName": "tren",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "contraccion",
+              "displayName": "contraccion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "articulacion",
+              "displayName": "articulacion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "grupo_muscular_primario",
+              "displayName": "grupo_muscular_primario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "grupo_muscular_secundario",
+              "displayName": "grupo_muscular_secundario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "grupo_muscular_terciario",
+              "displayName": "grupo_muscular_terciario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "maquina",
+              "displayName": "maquina",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "equipo_necesario",
+              "displayName": "equipo_necesario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "accesorio",
+              "displayName": "accesorio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "unilateral_bilateral",
+              "displayName": "unilateral_bilateral",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "dificultad",
+              "displayName": "dificultad",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "lvl_min_requerido",
+              "displayName": "lvl_min_requerido",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "es_axial",
+              "displayName": "es_axial",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "nivel_minimo_requerido",
+              "displayName": "nivel_minimo_requerido",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "es_primario",
+              "displayName": "es_primario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "es_secundario",
+              "displayName": "es_secundario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "es_terciario",
+              "displayName": "es_terciario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1424,
+        224
+      ],
+      "id": "d31658f3-d547-4d56-a4e8-219ffb415b4d",
+      "name": "Insert or update rows in a table1",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { continue: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        224
+      ],
+      "id": "37b57e37-200e-4ce1-9d98-51266938587b",
+      "name": "Continuar a PROBLEMAS"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "17bGxte3s3FOgkXjuVWQmgu5IP6aue303FbO52-Glw2E",
+          "mode": "list",
+          "cachedResultName": "problemas_restricciones",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17bGxte3s3FOgkXjuVWQmgu5IP6aue303FbO52-Glw2E/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17bGxte3s3FOgkXjuVWQmgu5IP6aue303FbO52-Glw2E/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1840,
+        224
+      ],
+      "id": "9e213d9a-e5ef-4193-8e81-b8133df448aa",
+      "name": "PROBLEMAS_RESTRICCIONES",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jeOVzp04anRFmyDx",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const isBlank = v => v === undefined || v === null || String(v).trim() === '';\nconst text = v => isBlank(v) ? null : String(v).trim();\nconst upper = v => {\n  const t = text(v);\n  return t ? t.toUpperCase() : null;\n};\nconst bool = v => {\n  if (isBlank(v)) return null;\n  const t = String(v).trim().toLowerCase();\n  if (['true','1','si','sí','yes','y'].includes(t)) return true;\n  if (['false','0','no','n'].includes(t)) return false;\n  return null;\n};\nconst int = v => isBlank(v) ? null : Number.parseInt(String(v).replace(/[^0-9-]/g, ''), 10);\nconst num = v => isBlank(v) ? null : Number(String(v).replace(',', '.'));\nconst date = v => {\n  const t = text(v);\n  if (!t || ['NO HAY','BUSCAR'].includes(t.toUpperCase())) return null;\n  if (/^\\d{2}\\/\\d{2}\\/\\d{4}$/.test(t)) {\n    const [d,m,y] = t.split('/');\n    return `${y}-${m}-${d}`;\n  }\n  return t;\n};\nconst nivel = v => {\n  const t = upper(v);\n  return ['P1','P2','P3','I1'].includes(t) ? t : 'P1';\n};\nconst objetivo = v => {\n  const t = upper(v);\n  if (!t) return null;\n  if (['GRASA','PERDIDA DE GRASA','PERDIDA_GRASA'].includes(t)) return 'perdida_de_grasa';\n  if (['MUSCULO','MUSCULATURA','GANANCIA MUSCULAR'].includes(t)) return 'musculatura';\n  if (['RC','RECOMPOSICION','RECOMPOSICION CORPORAL'].includes(t)) return 'recomposicion_corporal';\n  return t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');\n};\nconst yesNo = v => {\n  const t = upper(v);\n  if (!t) return false;\n  return ['SI','SÍ','TRUE','1','YES'].includes(t);\n};\nconst salida = [];\nfor (const item of $input.all()) {\n  const r = item.json;\n  if (isBlank(r.id_problema) || isBlank(r.nombre_problema)) continue;\n  salida.push({ json: {\n    id_problema: text(r.id_problema),\n    nombre_problema: text(r.nombre_problema),\n    tipo_impacto: text(r.tipo_impacto),\n    patron_a_evitar: upper(r.patron_a_evitar) === 'NO' ? null : upper(r.patron_a_evitar),\n    articulacion_afectada: upper(r.articulacion_afectada) === 'NO' ? null : upper(r.articulacion_afectada),\n    instruccion_automatica: text(r.instruccion_automatica),\n    comentario: text(r.comentario)\n  }});\n}\nreturn salida;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2048,
+        224
+      ],
+      "id": "c7e026de-3a24-4fc5-8fbd-0e31e81a0162",
+      "name": "Normalizar PROBLEMAS_RESTRICCIONES"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "value": "adt",
+          "mode": "list",
+          "cachedResultName": "adt"
+        },
+        "table": {
+          "__rl": true,
+          "value": "problemas_restricciones",
+          "mode": "list",
+          "cachedResultName": "problemas_restricciones"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id_problema": "={{ $json.id_problema }}",
+            "nombre_problema": "={{ $json.nombre_problema }}",
+            "tipo_impacto": "={{ $json.tipo_impacto }}",
+            "patron_a_evitar": "={{ $json.patron_a_evitar }}",
+            "articulacion_afectada": "={{ $json.articulacion_afectada }}",
+            "instruccion_automatica": "={{ $json.instruccion_automatica }}",
+            "comentario": "={{ $json.comentario }}"
+          },
+          "matchingColumns": [
+            "id_problema"
+          ],
+          "schema": [
+            {
+              "id": "id_problema",
+              "displayName": "id_problema",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "nombre_problema",
+              "displayName": "nombre_problema",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "tipo_impacto",
+              "displayName": "tipo_impacto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "patron_a_evitar",
+              "displayName": "patron_a_evitar",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "articulacion_afectada",
+              "displayName": "articulacion_afectada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "instruccion_automatica",
+              "displayName": "instruccion_automatica",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "comentario",
+              "displayName": "comentario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2256,
+        224
+      ],
+      "id": "5104d8ee-4a06-452a-94bf-6b8210f01f58",
+      "name": "Insert or update rows in a table2",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { continue: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        224
+      ],
+      "id": "a247a96f-a543-41dd-b70d-18bf7e10a445",
+      "name": "Continuar a ALUMNO_PROBLEMAS"
+    },
+    {
+      "parameters": {
+        "jsCode": "const isBlank = v => v === undefined || v === null || String(v).trim() === '';\nconst text = v => isBlank(v) ? null : String(v).trim();\nconst upper = v => {\n  const t = text(v);\n  return t ? t.toUpperCase() : null;\n};\nconst bool = v => {\n  if (isBlank(v)) return null;\n  const t = String(v).trim().toLowerCase();\n  if (['true','1','si','sí','yes','y'].includes(t)) return true;\n  if (['false','0','no','n'].includes(t)) return false;\n  return null;\n};\nconst int = v => isBlank(v) ? null : Number.parseInt(String(v).replace(/[^0-9-]/g, ''), 10);\nconst num = v => isBlank(v) ? null : Number(String(v).replace(',', '.'));\nconst date = v => {\n  const t = text(v);\n  if (!t || ['NO HAY','BUSCAR'].includes(t.toUpperCase())) return null;\n  if (/^\\d{2}\\/\\d{2}\\/\\d{4}$/.test(t)) {\n    const [d,m,y] = t.split('/');\n    return `${y}-${m}-${d}`;\n  }\n  return t;\n};\nconst nivel = v => {\n  const t = upper(v);\n  return ['P1','P2','P3','I1'].includes(t) ? t : 'P1';\n};\nconst objetivo = v => {\n  const t = upper(v);\n  if (!t) return null;\n  if (['GRASA','PERDIDA DE GRASA','PERDIDA_GRASA'].includes(t)) return 'perdida_de_grasa';\n  if (['MUSCULO','MUSCULATURA','GANANCIA MUSCULAR'].includes(t)) return 'musculatura';\n  if (['RC','RECOMPOSICION','RECOMPOSICION CORPORAL'].includes(t)) return 'recomposicion_corporal';\n  return t.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');\n};\nconst yesNo = v => {\n  const t = upper(v);\n  if (!t) return false;\n  return ['SI','SÍ','TRUE','1','YES'].includes(t);\n};\nconst salida = [];\nfor (const item of $input.all()) {\n  const r = item.json;\n  const idAlumno = int(r.id_alumno);\n  const idProblema = text(r.id_problema);\n  if (!idAlumno || !idProblema) continue;\n  salida.push({ json: {\n    id_relacion: int(r.id_relacion),\n    id_alumno: idAlumno,\n    id_problema: idProblema,\n    fecha_deteccion: date(r.fecha_deteccion) || new Date().toISOString().slice(0, 10),\n    esta_activo: bool(r.esta_activo) ?? true\n  }});\n}\nreturn salida;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        224
+      ],
+      "id": "b738fd99-0670-4715-bc86-274afd13ae62",
+      "name": "Normalizar ALUMNO_PROBLEMAS"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "value": "adt",
+          "mode": "list",
+          "cachedResultName": "adt"
+        },
+        "table": {
+          "__rl": true,
+          "value": "alumno_problemas",
+          "mode": "list",
+          "cachedResultName": "alumno_problemas"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "esta_activo": "={{ $json.esta_activo }}",
+            "id_relacion": "={{ $json.id_relacion }}",
+            "id_alumno": "={{ $json.id_alumno }}",
+            "id_problema": "={{ $json.id_problema }}",
+            "fecha_deteccion": "={{ $json.fecha_deteccion }}"
+          },
+          "matchingColumns": [
+            "id_relacion"
+          ],
+          "schema": [
+            {
+              "id": "id_relacion",
+              "displayName": "id_relacion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "id_alumno",
+              "displayName": "id_alumno",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "id_problema",
+              "displayName": "id_problema",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fecha_deteccion",
+              "displayName": "fecha_deteccion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "esta_activo",
+              "displayName": "esta_activo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3088,
+        224
+      ],
+      "id": "f9a4cda8-d592-4d7f-a33f-1f18b1700b6e",
+      "name": "Insert or update rows in a table3",
+      "credentials": {
+        "postgres": {
+          "id": "EPgvYnxbRUdcgoVD",
+          "name": "Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1Iyk5DEamh0E1Ni3AuUZ9x6Mn18SUhfbX7FAjEsm1O80",
+          "mode": "list",
+          "cachedResultName": "alumno_problemas",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Iyk5DEamh0E1Ni3AuUZ9x6Mn18SUhfbX7FAjEsm1O80/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Iyk5DEamh0E1Ni3AuUZ9x6Mn18SUhfbX7FAjEsm1O80/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2672,
+        224
+      ],
+      "id": "470fb3b1-12f8-4b77-8ba6-e0681d490849",
+      "name": "ALUMNO_PROBLEMAS",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jeOVzp04anRFmyDx",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "DRIVE-A-PSQL",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -256,
+        320
+      ],
+      "id": "8703bb83-1cae-43c6-8609-0c57ba1446d5",
+      "name": "Webhook",
+      "webhookId": "adebd026-3746-4cb0-a629-49cc73cb8385"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "RESET TOTAL ADT": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ejecución Manual": {
+      "main": [
+        [
+          {
+            "node": "RESET TOTAL ADT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Insert or update rows in a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EJERCICIOS": {
+      "main": [
+        [
+          {
+            "node": "Normalizar EJERCICIOS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continuar a EJERCICIOS": {
+      "main": [
+        [
+          {
+            "node": "EJERCICIOS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert or update rows in a table": {
+      "main": [
+        [
+          {
+            "node": "Continuar a EJERCICIOS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar EJERCICIOS": {
+      "main": [
+        [
+          {
+            "node": "Insert or update rows in a table1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert or update rows in a table1": {
+      "main": [
+        [
+          {
+            "node": "Continuar a PROBLEMAS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continuar a PROBLEMAS": {
+      "main": [
+        [
+          {
+            "node": "PROBLEMAS_RESTRICCIONES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PROBLEMAS_RESTRICCIONES": {
+      "main": [
+        [
+          {
+            "node": "Normalizar PROBLEMAS_RESTRICCIONES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar PROBLEMAS_RESTRICCIONES": {
+      "main": [
+        [
+          {
+            "node": "Insert or update rows in a table2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert or update rows in a table2": {
+      "main": [
+        [
+          {
+            "node": "Continuar a ALUMNO_PROBLEMAS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continuar a ALUMNO_PROBLEMAS": {
+      "main": [
+        [
+          {
+            "node": "ALUMNO_PROBLEMAS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar ALUMNO_PROBLEMAS": {
+      "main": [
+        [
+          {
+            "node": "Insert or update rows in a table3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ALUMNO_PROBLEMAS": {
+      "main": [
+        [
+          {
+            "node": "Normalizar ALUMNO_PROBLEMAS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert or update rows in a table3": {
+      "main": [
+        []
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "RESET TOTAL ADT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "360fc44e-15a6-4d95-8702-be8bef73f0ef",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a212b7d49b98dc0cbb349ea46a8c5f2f03b9f67fb9905ba8a3c0bc1f37bfbf72"
+  },
+  "id": "7dRXozCUeVUUUNIs",
+  "tags": []
+}
