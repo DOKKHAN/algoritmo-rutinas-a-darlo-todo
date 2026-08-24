@@ -10,6 +10,7 @@ CREATE SCHEMA IF NOT EXISTS adt;
 DROP TABLE IF EXISTS adt.log_entrenamiento CASCADE;
 DROP TABLE IF EXISTS adt.evaluaciones_movimiento CASCADE;
 DROP TABLE IF EXISTS adt.evaluaciones_sesion CASCADE;
+DROP TABLE IF EXISTS adt.sesiones_entrenamiento CASCADE;
 DROP TABLE IF EXISTS adt.microciclos_control CASCADE;
 DROP TABLE IF EXISTS adt.bloques_ejercicios CASCADE;
 DROP TABLE IF EXISTS adt.mesociclos CASCADE;
@@ -251,8 +252,31 @@ CREATE TABLE adt.evaluaciones_movimiento (
     tecnica_calificacion INTEGER
 );
 
+CREATE TABLE adt.sesiones_entrenamiento (
+    id_sesion_entrenamiento SERIAL PRIMARY KEY,
+    id_alumno INTEGER NOT NULL REFERENCES adt.alumnos(id_alumno) ON DELETE CASCADE,
+    id_mesociclo INTEGER NOT NULL REFERENCES adt.mesociclos(id_mesociclo) ON DELETE CASCADE,
+    semana_meso INTEGER NOT NULL,
+    dia_numero INTEGER NOT NULL,
+    fecha_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_cierre TIMESTAMP,
+    estado VARCHAR(30) DEFAULT 'abierta',
+    ejercicios_planificados INTEGER DEFAULT 0,
+    ejercicios_registrados INTEGER DEFAULT 0,
+    es_completa BOOLEAN DEFAULT FALSE,
+    procesada_microciclo BOOLEAN DEFAULT FALSE,
+    fecha_procesada_microciclo TIMESTAMP,
+    comentario_cierre TEXT,
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT sesiones_entrenamiento_estado_check CHECK (
+        estado IN ('abierta', 'parcial', 'completa', 'cancelada')
+    )
+);
+
 CREATE TABLE adt.log_entrenamiento (
     id_log SERIAL PRIMARY KEY,
+    id_sesion_entrenamiento INTEGER REFERENCES adt.sesiones_entrenamiento(id_sesion_entrenamiento) ON DELETE SET NULL,
     id_bloque INTEGER REFERENCES adt.bloques_ejercicios(id_bloque) ON DELETE CASCADE,
     semana_del_meso INTEGER,
     fecha_realizada TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -275,5 +299,8 @@ CREATE INDEX idx_mesociclos_macro_activo ON adt.mesociclos (id_macrociclo, esta_
 CREATE INDEX idx_bloques_mesociclo_semana ON adt.bloques_ejercicios (id_mesociclo, semana_meso);
 CREATE INDEX idx_bloques_ejercicio ON adt.bloques_ejercicios (id_ejercicio);
 CREATE INDEX idx_log_bloque_fecha ON adt.log_entrenamiento (id_bloque, fecha_realizada DESC);
+CREATE INDEX idx_log_sesion_entrenamiento ON adt.log_entrenamiento (id_sesion_entrenamiento);
+CREATE INDEX idx_sesiones_entrenamiento_alumno_estado ON adt.sesiones_entrenamiento (id_alumno, estado, procesada_microciclo);
+CREATE INDEX idx_sesiones_entrenamiento_mesociclo_dia ON adt.sesiones_entrenamiento (id_mesociclo, semana_meso, dia_numero);
 CREATE INDEX idx_microciclos_control_estado ON adt.microciclos_control (estado, requiere_recalculo);
 CREATE INDEX idx_microciclos_control_mesociclo ON adt.microciclos_control (id_mesociclo, semana_meso);
