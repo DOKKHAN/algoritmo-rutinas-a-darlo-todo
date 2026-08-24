@@ -1,7 +1,7 @@
-# Instrucciones webhook Appsmith - rutinas v3.6
+# Instrucciones webhook Appsmith - rutinas v3.6 V2
 
 Este documento define el contrato que Appsmith debe respetar para ejecutar el
-workflow `Algoritmo de Rutina_matriz_v3_6_microciclos_iterativos.json`.
+workflow `n8n/algoritmo-rutinas-a-darlo-todo.json`.
 
 Endpoint:
 
@@ -92,6 +92,9 @@ torso_pierna_torso
 pierna_torso_pierna
 pierna_torso_pierna_torso
 torso_torso_pierna_torso
+ff
+aem
+aepm
 ```
 
 Aliases tolerados:
@@ -107,6 +110,11 @@ tpt
 ptp
 ptpt
 ttpt
+ff
+aem
+aepm
+agarre_empuje_mixto
+agarre_empuje_pierna_mixto
 ```
 
 `enfoque_especifico`
@@ -149,7 +157,8 @@ pantorrilla
 `debilidad`
 
 - Tipo: string o null.
-- Define slot metodologico 1 cuando existe.
+- Define slot metodologico 1. En V2, si no se envia debilidad, el workflow usa
+  abdomen por defecto.
 - Valores canonicos para dropdown:
 
 ```text
@@ -161,6 +170,13 @@ manguito_rotador
 
 Enviar `null` real cuando no aplique. No enviar `"null"`, `"ninguna"` ni string
 vacio.
+
+Reglas V2:
+
+- `null` se transforma en abdomen.
+- `gluteo` aplica como gluteo en full body y pierna.
+- `gluteo` en torso/AEM se transforma en abdomen.
+- `manguito_rotador` aplica como slot 1 en cualquier tipo de dia.
 
 ## Dropdowns recomendados por frecuencia
 
@@ -179,6 +195,7 @@ Frecuencia 2:
 
 ```text
 full_body
+ff
 pierna
 torso
 pierna_torso
@@ -188,18 +205,22 @@ torso_pierna
 Frecuencia 3:
 
 ```text
-full_body
 torso
+aem
 fullbody_torso_pierna
 torso_pierna_torso
 pierna_torso_pierna
 ```
+
+Nota V2: si Appsmith envia `full_body` con frecuencia 3, el algoritmo redirige
+a `fullbody_torso_pierna`.
 
 Frecuencia 4:
 
 ```text
 pierna_torso_pierna_torso
 torso_torso_pierna_torso
+aepm
 ```
 
 Frecuencia 5:

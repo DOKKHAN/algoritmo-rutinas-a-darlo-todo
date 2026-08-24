@@ -85,7 +85,7 @@ JOIN adt.bloques_ejercicios b ON b.id_mesociclo = m.id_mesociclo
 GROUP BY m.id_mesociclo, b.semana_meso, b.dia_numero, b.dia_tipo
 ORDER BY m.id_mesociclo DESC, b.semana_meso, b.dia_numero;
 
--- 5) Dias pierna que superen el maximo metodologico de 5 ejercicios
+-- 5) Dias pierna que no cumplan el conteo V2 de 6 ejercicios
 WITH params AS (
   SELECT 260::integer AS id_alumno
 )
@@ -101,7 +101,7 @@ JOIN adt.mesociclos m ON m.id_macrociclo = mc.id_macrociclo
 JOIN adt.bloques_ejercicios b ON b.id_mesociclo = m.id_mesociclo
 WHERE b.dia_tipo = 'pierna'
 GROUP BY m.id_mesociclo, b.semana_meso, b.dia_numero, b.dia_tipo
-HAVING COUNT(*) > 5
+HAVING COUNT(*) <> 6
 ORDER BY m.id_mesociclo DESC, b.semana_meso, b.dia_numero;
 
 -- 6) Estabilidad de ejercicios entre semanas para cada dia/orden
@@ -128,7 +128,7 @@ ORDER BY m.id_mesociclo DESC, b.dia_numero, b.orden;
 -- Esperado actual:
 -- - full_body: 6 ejercicios
 -- - torso: 6 ejercicios
--- - pierna: maximo 5 ejercicios
+-- - pierna: 6 ejercicios
 -- - cardio: 1 ejercicio
 WITH params AS (
   SELECT 260::integer AS id_alumno
@@ -150,6 +150,6 @@ FROM conteos
 WHERE
   (dia_tipo = 'full_body' AND ejercicios_dia <> 6)
   OR (dia_tipo = 'torso' AND ejercicios_dia <> 6)
-  OR (dia_tipo = 'pierna' AND ejercicios_dia > 5)
+  OR (dia_tipo = 'pierna' AND ejercicios_dia <> 6)
   OR (dia_tipo = 'cardio' AND ejercicios_dia <> 1)
 ORDER BY id_mesociclo DESC, semana_meso, dia_numero;

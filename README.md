@@ -6,7 +6,7 @@ Repositorio de versionamiento para los workflows n8n y documentacion tecnica del
 
 - `n8n/algoritmo-rutinas-a-darlo-todo.json`
   - Workflow principal de generacion de rutinas.
-  - Basado en `Algoritmo de Rutina_matriz_v3_6_5_fix_conteo_dias_normalizado.json`.
+  - Basado en `Algoritmo de Rutina_matriz_v3_6_5_fix_conteo_dias_normalizado.json`, ajustado a la metodologia V2.
   - Incluye macrociclo, mesociclo, microciclos, seleccion tecnica, RIR y persistencia en `adt.bloques_ejercicios`.
 
 - `n8n/reset-rutinas-a-darlo-todo.json`

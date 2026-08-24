@@ -13,6 +13,8 @@ Este proyecto automatiza la generacion de rutinas deportivas para el sistema
   workspace)
 - `manual-oficial-de-iteracion-de-microciclos-p1-y-p2-a4.pdf` (en Downloads si
   aun no esta copiado al workspace)
+- `n8n/algoritmo-rutinas-a-darlo-todo.json`
+- `n8n/reset-rutinas-a-darlo-todo.json`
 - `Algoritmo de Rutina_matriz_v3_6_5_fix_conteo_dias_normalizado.json`
 - `Algoritmo de Rutina_matriz_v3_6_4_fix_torso_pierna_microciclo_base.json`
 - `Algoritmo de Rutina_matriz_v3_6_3_fix_activo_ejercicios.json`
@@ -34,6 +36,10 @@ Cuando haya conflicto entre documentos antiguos y el workflow actual, usar el
 workflow mas actualizado como referencia de implementacion y `Metodologia de
 rutina 10 de Junio.pdf` como referencia metodologica. El PDF de mayo queda como
 referencia historica salvo que junio no cubra el caso.
+
+Nota V2: la metodologia V2 entregada por Felipe Alarcon redefine el slot 1 y
+las rutinas excepcionales. En conflicto directo, aplicar V2 sobre reglas
+anteriores del proyecto.
 
 ## Principios base
 
@@ -124,6 +130,9 @@ Appsmith es:
   - `torso_pierna`
   - `pierna_torso_pierna_torso`
   - `torso_torso_pierna_torso`
+  - `ff`
+  - `aem`
+  - `aepm`
 - Aliases aceptados:
   - `fullbody`
   - `cuerpo_completo`
@@ -134,6 +143,9 @@ Appsmith es:
   - `tp`
   - `ptpt`
   - `ttpt`
+  - `ff`
+  - `agarre_empuje_mixto`
+  - `agarre_empuje_pierna_mixto`
 
 `enfoque_especifico`
 
@@ -160,9 +172,8 @@ Appsmith es:
   - `abdomen`
   - `manguito_rotador`
 - Si no hay debilidad, enviar `null`, no el texto `ninguna`.
-- Si `debilidad = null`, no se crea slot metodologico 1. Debe aparecer el slot
-  metodologico 7 como reemplazo para mantener la cantidad de ejercicios que
-  corresponda.
+- Si `debilidad = null`, V2 indica que el slot 1 debe ser abdomen por defecto.
+  El slot metodologico 7 queda solo como mecanismo excepcional interno.
 
 ## Datos que el workflow completa desde la base
 
@@ -247,7 +258,8 @@ distribuciones aplican.
 
 ### 1. full_body
 
-Aplica frecuencia 1 a 3. Frecuencia 4 y 5 no aplican.
+Aplica frecuencia 1 a 2. En V2, si se solicita `full_body` con frecuencia 3,
+redirigir a `fullbody_torso_pierna` (`FPT`). Frecuencia 4 y 5 no aplican.
 
 Ordenes principales segun frecuencia:
 
@@ -259,11 +271,6 @@ Ordenes principales segun frecuencia:
 - Frecuencia 2:
   - Dia 1: `SENTADILLA`, `AGARRE`, `CADERA`, `EMPUJE`
   - Dia 2: `CADERA`, `EMPUJE`, `SENTADILLA`, `AGARRE`
-- Frecuencia 3:
-  - Dia 1: `SENTADILLA`, `AGARRE`, `CADERA`, `EMPUJE`
-  - Dia 2: `AGARRE`, `EMPUJE`, `CADERA`, `SENTADILLA`
-  - Dia 3: `CADERA`, `EMPUJE`, `SENTADILLA`, `AGARRE`
-
 En full body:
 
 - Slots 2 y 3 priorizan ejercicios libres.
@@ -296,7 +303,8 @@ Torso mixto debe alternar patrones internamente:
 
 ### 3. pierna
 
-Aplica frecuencia 1 a 3. La rutina de pierna tiene maximo 5 ejercicios por dia.
+Aplica frecuencia 1 a 3. En V2 pierna usa 6 slots; si el objetivo es perdida de
+grasa o recomposicion con criterio aerobico, el slot 6 es aerobico.
 
 - Frecuencia 1 y 2: pierna mixta.
 - Frecuencia 3:
@@ -362,6 +370,30 @@ Aplica frecuencia 4. Frecuencia 5 agrega dia 5 cardio.
 - Dia 4: torso mixto
 - Dia 5, si frecuencia 5: cardio
 
+### 10. ff
+
+Alias V2 de `full_body` frecuencia 2.
+
+- Dia 1: full body
+- Dia 2: full body
+
+### 11. aem
+
+Alias V2 de torso frecuencia 3: agarre, empuje y mixto.
+
+- Dia 1: torso traccion/agarre
+- Dia 2: torso empuje
+- Dia 3: torso mixto
+
+### 12. aepm
+
+Alias V2 de `torso_torso_pierna_torso`: agarre, empuje, pierna y mixto.
+
+- Dia 1: torso traccion/agarre
+- Dia 2: torso empuje
+- Dia 3: pierna
+- Dia 4: torso mixto
+
 ## Orden de ejercicios por dia
 
 La matriz metodologica usa slots 1 a 7, pero la rutina entregada al alumno debe
@@ -369,21 +401,20 @@ guardar siempre el `orden` desde 1 en adelante dentro de cada dia.
 
 Slots metodologicos:
 
-- Slot 1: debilidad del alumno, si existe.
+- Slot 1: debilidad del alumno. Si no existe, abdomen por defecto.
 - Slot 2: primario.
 - Slot 3: primario.
 - Slot 4: primario o secundario.
 - Slot 5: primario, secundario o terciario.
 - Slot 6: terciario o aerobico segun objetivo y enfoque.
-- Slot 7: terciario o aerobico; solo aparece cuando no hay slot 1 porque el
-  alumno no tiene debilidad.
+- Slot 7: excepcional, solo para resguardar compatibilidad interna si un slot
+  queda vacio por falta de candidatos. No reemplaza el abdomen por defecto V2.
 
 Reglas de guardado:
 
 - Con debilidad: se seleccionan slots metodologicos 1 a 6 y se guardan como
   orden 1 a 6.
-- Sin debilidad: no se selecciona slot metodologico 1; se agrega slot
-  metodologico 7 y los ejercicios seleccionados se guardan reenumerados como
+- Sin debilidad: se selecciona abdomen en slot 1 y se guardan slots 1 a 6 como
   orden 1 a 6.
 - Mantener trazabilidad del slot metodologico original en comentario o campo
   auxiliar cuando exista, por ejemplo `orden_matriz`.
@@ -398,10 +429,8 @@ Regla por objetivo:
   - En matrices torso, el slot 6 es aerobico; los slots 2 a 5 se ajustan segun
     el dia de torso definido por la planilla `RUTINA PERDIDA GRASA.xlsx`.
 - `musculatura`: no hay ejercicio aerobico por objetivo.
-  - Si no hay debilidad ni enfoque especifico, el primer ejercicio puede ser
-    abdomen.
-  - El sexto ejercicio por defecto es hombro para full body y torso; en pierna
-    puede omitirse si supera el maximo definido para pierna.
+  - Si no hay debilidad, el primer ejercicio debe ser abdomen.
+  - El sexto ejercicio es terciario/hipertrofia segun tipo de dia.
 - `recomposicion_corporal`: segun metodologia del 10 de junio, el ejercicio 6
   va siempre aerobico con el mismo criterio que perdida de grasa. Si no hay
   debilidad ni enfoque especifico, el primer ejercicio puede ser abdomen.
@@ -470,7 +499,8 @@ Las debilidades solo pueden ser:
 - manguito rotador
 
 La debilidad ocupa el slot 1 y debe seleccionar ejercicios de baja dificultad o
-seguros para el nivel del alumno.
+seguros para el nivel del alumno. Si no hay debilidad, V2 usa abdomen como slot
+1 por defecto.
 
 Reglas especificas de debilidad:
 
@@ -480,15 +510,12 @@ Reglas especificas de debilidad:
 - `gluteo`:
   - En pierna y full body, usar progresion por mesociclo: meso 1 gluteo medio
     abduccion; meso 2 patada lateral cuadrupedia; meso 3 patada lateral.
-  - Si el contexto del dia no permite gluteo, pasar a abdomen como alternativa
-    segura.
+  - Si el contexto del dia es torso/AEM, pasar a abdomen como alternativa V2.
 - `abdomen`:
   - Primeros ejercicios y sextos ejercicios pueden ser abdomen.
   - No debe chocar con otros criterios prioritarios.
 - `manguito_rotador`:
-  - En torso y full body, los primeros ejercicios son de manguito rotador.
-  - En pierna, caso excepcional: queda como sexto ejercicio y no se crea primer
-    ejercicio de debilidad.
+  - Independiente del tipo de rutina, el slot 1 es manguito rotador.
 
 ## Restricciones y salud
 
@@ -691,9 +718,9 @@ Reglas de persistencia:
   `enfoque_especifico`.
 - Empuje/traccion debe alternar en torso mixto.
 - Cadera/sentadilla debe alternar en pierna mixta.
-- Pierna no debe superar 5 ejercicios por dia.
-- Si `debilidad = null`, no crear slot metodologico 1 y agregar slot
-  metodologico 7 cuando corresponda.
+- En V2, pierna puede llegar a 6 ejercicios cuando el slot 6 es aerobico o
+  terciario inferior.
+- Si `debilidad = null`, crear slot 1 de abdomen por defecto.
 - El orden guardado en base debe partir desde 1 aunque el slot metodologico
   original sea 2.
 - No repetir `id_ejercicio` dentro del microciclo.
