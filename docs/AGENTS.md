@@ -584,6 +584,10 @@ Criterios de seleccion:
 - Mantener el mismo ejercicio para el mismo dia/slot durante las 6 semanas del
   mesociclo, salvo que una restriccion o falta de candidato obligue a fallback
   documentado.
+- Si no existe candidato estricto para un slot, aplicar fallback escalonado:
+  primero relajar dificultad/maquina/mono de la matriz, despues usar una
+  alternativa compatible con la zona del dia. Este fallback no puede romper la
+  regla de no repeticion dentro del microciclo ni puede cruzar torso/pierna.
 - Aplicar la matriz de la hoja `MESOCICLOS` segun nivel, numero de mesociclo y
   orden metodologico para dificultad, maquina, monoarticularidad y repeticion
   permitida respecto del mesociclo previo.
